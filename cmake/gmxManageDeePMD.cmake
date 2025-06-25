@@ -32,16 +32,53 @@
 # the research papers on the package. Check out https://www.gromacs.org.
 
 # link DeePMD library to Gromacs
-gmx_option_bool(GMX_USE_DEEPMD
+
+#
+# Called from the top-level CMakeLists.txt via include(gmxManageDeePMD)
+#
+
+# This is the user-visible switch:
+gmx_option_multichoice(GMX_USE_DEEPMD
     "Enable DeePMD potential interface (requires DeePMD C++ library)"
     OFF
-)
+    ON OFF)
 
-if(GMX_USE_DEEPMD)
+#
+# Build an INTERFACE library named 'deepmdgmx'
+# that we can hook onto 'applied_forces' later.
+#
+function(gmx_manage_deepmd)
+    add_library(deepmdgmx INTERFACE)
+    set(GMX_DEEPMD_ACTIVE OFF PARENT_SCOPE)
 
-    set(GMX_DEEPMD_ACTIVE ON)
-    # deepmd
-    find_package(DeePMD REQUIRED)
-    target_link_libraries(applied_forces PRIVATE DeePMD::deepmd_cc)
+    if(GMX_USE_DEEPMD STREQUAL "ON")
+        find_package(DeePMD REQUIRED)
+        # print out where we found it:
+        message(STATUS "Found DeePMD in: ${DeePMD_DIR}")
+        if(TARGET DeePMD::deepmd_cc)
+            get_target_property(_libloc DeePMD::deepmd_cc LOCATION)
+            if(_libloc)
+                message(STATUS "  DeePMD::deepmd_cc library at: ${_libloc}")
+            else()
+                # Fallback: maybe the package defined DeePMD_LIBRARIES
+                message(STATUS "  DeePMD_LIBRARIES = ${DeePMD_LIBRARIES}")
+            endif()
+        else()
+            message(WARNING "  DeePMD::deepmd_cc target not found; did the package config create a different target?")
+        endif()
 
-endif()
+        # hook libraries and includes into our INTERFACE target
+        target_link_libraries(deepmdgmx
+            INTERFACE
+                DeePMD::deepmd_cc
+        )
+        target_include_directories(deepmdgmx
+            SYSTEM INTERFACE
+            $<BUILD_INTERFACE:${DeePMD_DIR}/../include>  # adjust if DeePMD exports DeePMD_INCLUDE_DIRS
+        )
+
+        set(GMX_DEEPMD_ACTIVE ON PARENT_SCOPE)
+    endif()
+endfunction()
+
+gmx_manage_deepmd()

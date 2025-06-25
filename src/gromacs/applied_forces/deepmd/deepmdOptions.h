@@ -46,6 +46,7 @@
 #include <string>
 
 #include "gromacs/utility/real.h"
+#include "gromacs/mdtypes/imdpoptionprovider.h"
 
 struct gmx_mtop_t;
 struct t_commrec;
@@ -65,7 +66,7 @@ struct deepmdOptions
 
 };
 
-class deepmdOptionProvider : public IMDPOptionProvider
+class deepmdOptionProvider : public IMdpOptionProvider
 {
 public:
     //! Implementation of IMdpOptionProvider methods

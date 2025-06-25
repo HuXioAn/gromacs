@@ -580,6 +580,11 @@ include(gmxManageCP2K)
 include(gmxManageNNPot)
 
 ########################################################################
+#Process DeepMD settings
+########################################################################
+include(gmxManageDeePMD)
+
+########################################################################
 #Process shared/static library settings
 ########################################################################
 include(gmxManageSharedLibraries)

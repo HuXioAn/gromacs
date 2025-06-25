@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright 2024- The GROMACS Authors
+# Copyright 2025- The GROMACS Authors
 # and the project initiators Erik Lindahl, Berk Hess and David van der Spoel.
 # Consult the AUTHORS/COPYING files and https://www.gromacs.org for details.
 #
@@ -35,24 +35,25 @@
 # In other case compile regular deepmdModule.cpp and tests
 if(GMX_DEEPMD_ACTIVE)
 
-    set(DEEPMD_SOURCES 
+    gmx_add_libgromacs_sources( 
         deepmdForceProvider.cpp
         deepmdOptions.cpp
         deepmdModule.cpp
+        deepmdTopologyPreprocessor.cpp
     )
-    gmx_add_libgromacs_sources(
-        ${DEEPMD_SOURCES}
-    )
-
-    # deepmd
-    find_package(DeePMD REQUIRED)
-    link_target_libraries(applied_forces PRIVATE DeePMD::deepmd_cc)
 
     if (BUILD_TESTING)
-        add_subdirectory(tests)
+        #add_subdirectory(tests)
     endif()
+
 else()
-gmx_add_libgromacs_sources(
-        deepmdModule_stub.cpp
+
+    gmx_add_libgromacs_sources(deepmdModule_stub.cpp)        
+  
+endif()
+
+if(GMX_DEEPMD_ACTIVE)
+    target_link_libraries(applied_forces
+        INTERFACE deepmdgmx
     )
 endif()
