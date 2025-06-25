@@ -35,7 +35,7 @@
  * \brief
  * Implements DeepMDPotTopologyPrepocessor.
  *
- * \author Lukas Müllender <lukas.muellender@gmail.com>
+ * \author Andong Hu <andonghu@kth.se> and Luca Pennati <pennati@kth.se>
  * \ingroup module_applied_forces
  */
 
