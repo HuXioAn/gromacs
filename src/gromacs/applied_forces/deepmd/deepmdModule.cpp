@@ -99,7 +99,7 @@ public:
 
 
 private:
-    deepmdOptionProvider options_{};
+    DeepmdOptionsProvider options_{};
     std::unique_ptr<deepmdForceProvider> deepmdForceProvider_{};
 };
 

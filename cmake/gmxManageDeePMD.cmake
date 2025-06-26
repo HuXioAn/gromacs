@@ -38,10 +38,10 @@
 #
 
 # This is the user-visible switch:
-gmx_option_multichoice(GMX_USE_DEEPMD
+option(GMX_USE_DEEPMD
     "Enable DeePMD potential interface (requires DeePMD C++ library)"
     OFF
-    ON OFF)
+    )
 
 #
 # Build an INTERFACE library named 'deepmdgmx'
@@ -67,17 +67,39 @@ function(gmx_manage_deepmd)
             message(WARNING "  DeePMD::deepmd_cc target not found; did the package config create a different target?")
         endif()
 
-        # hook libraries and includes into our INTERFACE target
-        target_link_libraries(deepmdgmx
-            INTERFACE
-                DeePMD::deepmd_cc
-        )
+        if(NOT DEFINED DeePMD_INCLUDE_DIRS OR DeePMD_INCLUDE_DIRS STREQUAL "")
+            set(DeePMD_INCLUDE_DIRS ${DeePMD_DIR}/../../../include/deepmd
+            )
+        endif()
+        if(NOT DEFINED DeePMD_LIBRARY_DIRS OR DeePMD_LIBRARY_DIRS STREQUAL "")
+            set(DeePMD_LIBRARY_DIRS ${DeePMD_DIR}/../../)
+        endif()
+        
+        # Hook includes into the INTERFACE target:
         target_include_directories(deepmdgmx
             SYSTEM INTERFACE
-            $<BUILD_INTERFACE:${DeePMD_DIR}/../include>  # adjust if DeePMD exports DeePMD_INCLUDE_DIRS
+            ${DeePMD_INCLUDE_DIRS}
         )
 
+        # Hook libraries into the INTERFACE target:
+        target_link_directories(deepmdgmx
+            INTERFACE
+            ${DeePMD_LIBRARY_DIRS}
+        )
+
+        # And link the imported target or raw libraries:
+        if(TARGET DeePMD::deepmd_cc)
+            target_link_libraries(deepmdgmx INTERFACE DeePMD::deepmd_cc)
+        elseif(DEFINED DeePMD_LIBRARIES AND NOT DeePMD_LIBRARIES STREQUAL "")
+            target_link_libraries(deepmdgmx INTERFACE ${DeePMD_LIBRARIES})
+        else()
+            message(FATAL_ERROR
+                "DeePMD found but neither DeePMD::deepmd_cc nor DeePMD_LIBRARIES are set."
+            )
+        endif()
+
         set(GMX_DEEPMD_ACTIVE ON PARENT_SCOPE)
+    
     endif()
 endfunction()
 

@@ -66,7 +66,7 @@ struct deepmdOptions
 
 };
 
-class deepmdOptionProvider : public IMdpOptionProvider
+class DeepmdOptionsProvider : public IMdpOptionProvider
 {
 public:
     //! Implementation of IMdpOptionProvider methods

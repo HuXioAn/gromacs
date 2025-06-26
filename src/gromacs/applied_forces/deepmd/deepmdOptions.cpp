@@ -49,34 +49,34 @@
 namespace gmx
 {
 
-void deepmdOptions::initMdpTransform(IKeyValueTreeTransformRules* rules)
+void DeepmdOptionsProvider::initMdpTransform(IKeyValueTreeTransformRules* rules)
 {
 
 }
 
-void deepmdOptions::initMdpOptions(IOptionsContainerWithSections* options)
+void DeepmdOptionsProvider::initMdpOptions(IOptionsContainerWithSections* options)
 {
 
 }
 
-void deepmdOptions::buildMdpOutput(KeyValueTreeObjectBuilder* builder) const
+void DeepmdOptionsProvider::buildMdpOutput(KeyValueTreeObjectBuilder* builder) const
 {
 
 }
 
-std::string deepmdOptionProvider::getModelPath() const
+std::string DeepmdOptionsProvider::getModelPath() const
 {
-    return opts_.modelFile;
+    return options_.modelFile;
 }
 
-bool deepmdOptionProvider::getProvideVerletList() const
+bool DeepmdOptionsProvider::getProvideVerletList() const
 {
-    return opts_.provideVerletList;
+    return options_.provideVerletList;
 }
 
-bool deepmdOptionProvider::isActive() const
+bool DeepmdOptionsProvider::isActive() const
 {
-    return opts_.active;
+    return options_.active;
 }
 
 
