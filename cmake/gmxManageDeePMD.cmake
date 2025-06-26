@@ -56,9 +56,16 @@ function(gmx_manage_deepmd)
         # print out where we found it:
         message(STATUS "Found DeePMD in: ${DeePMD_DIR}")
         if(TARGET DeePMD::deepmd_cc)
-            get_target_property(_libloc DeePMD::deepmd_cc LOCATION)
-            if(_libloc)
-                message(STATUS "  DeePMD::deepmd_cc library at: ${_libloc}")
+            # 1. Ask CMake for the include dirs that DeePMD::deepmd_cc advertises:
+            get_target_property(DeePMD_INCLUDE_DIRS DeePMD::deepmd_cc INTERFACE_INCLUDE_DIRECTORIES)
+            set(DeePMD_INCLUDE_DIRS ${DeePMD_INCLUDE_DIRS}/deepmd)
+            # 2. Ask CMake for the full path(s) to the library file(s):
+            get_target_property(_DeePMD_LIBLOC DeePMD::deepmd_cc LOCATION)
+            # 3. Extract the directory component of the library location:
+            get_filename_component(DeePMD_LIBRARY_DIRS ${_DeePMD_LIBLOC} DIRECTORY)
+            if(_DeePMD_LIBLOC)
+                message(STATUS "DeePMD::deepmd_cc headers: ${DeePMD_INCLUDE_DIRS}")
+                message(STATUS "DeePMD::deepmd_cc library dir: ${DeePMD_LIBRARY_DIRS}")
             else()
                 # Fallback: maybe the package defined DeePMD_LIBRARIES
                 message(STATUS "  DeePMD_LIBRARIES = ${DeePMD_LIBRARIES}")
@@ -66,18 +73,10 @@ function(gmx_manage_deepmd)
         else()
             message(WARNING "  DeePMD::deepmd_cc target not found; did the package config create a different target?")
         endif()
-
-        if(NOT DEFINED DeePMD_INCLUDE_DIRS OR DeePMD_INCLUDE_DIRS STREQUAL "")
-            set(DeePMD_INCLUDE_DIRS ${DeePMD_DIR}/../../../include/deepmd
-            )
-        endif()
-        if(NOT DEFINED DeePMD_LIBRARY_DIRS OR DeePMD_LIBRARY_DIRS STREQUAL "")
-            set(DeePMD_LIBRARY_DIRS ${DeePMD_DIR}/../../)
-        endif()
         
         # Hook includes into the INTERFACE target:
         target_include_directories(deepmdgmx
-            SYSTEM INTERFACE
+            INTERFACE
             ${DeePMD_INCLUDE_DIRS}
         )
 
