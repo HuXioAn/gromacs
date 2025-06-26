@@ -70,7 +70,7 @@ public:
 
     void subscribeToPreProcessingNotifications(MDModulesNotifiers* /*notifier*/) override {}
 
-    void subscribeToSimulationSetupNotifications(MDModulesNotifiers* notifier) override {}
+    void subscribeToSimulationSetupNotifications(MDModulesNotifiers* /*notifier*/) override {}
 
     IMdpOptionProvider* mdpOptionProvider() override { return nullptr; }
 

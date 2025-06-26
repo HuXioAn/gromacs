@@ -129,6 +129,16 @@ struct MDModulesEnergyOutputToNNPotRequestChecker
     bool energyOutputToNNPot_ = false;
 };
 
+/*! \libinternal \brief Check if DEEPMD module outputs energy to a specific field.
+ *
+ * Ensures that energy is output for DEEPMD module.
+ */
+struct MDModulesEnergyOutputToDEEPMDRequestChecker
+{
+    //! Trigger output to DEEPMD energy field
+    bool energyOutputToDEEPMD_ = false;
+};
+
 /*! \libinternal
  * \brief Collect errors for the energy calculation frequency.
  *
@@ -413,6 +423,7 @@ struct MDModulesNotifiers
                            MDModulesEnergyOutputToDensityFittingRequestChecker*,
                            MDModulesEnergyOutputToQMMMRequestChecker*,
                            MDModulesEnergyOutputToNNPotRequestChecker*,
+                           MDModulesEnergyOutputToDEEPMDRequestChecker*,
                            SeparatePmeRanksPermitted*,
                            const PbcType&,
                            const SimulationTimeStep&,

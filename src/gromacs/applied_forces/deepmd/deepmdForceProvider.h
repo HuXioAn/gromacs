@@ -43,27 +43,77 @@
 
 #include <memory>
 #include "gromacs/mdtypes/iforceprovider.h"
+#include "gromacs/math/vectypes.h"
+
+
+
 #include "deepmd/DeepPot.h"
+
+enum class PbcType;
+
 
 namespace gmx
 {
 struct deepmdOptions;
+struct deepmdInferenceInfo;
 
 class deepmdForceProvider final : public IForceProvider
 {
 public:
 
-    deepmdForceProvider(const deepmdOptions& options);
+    /*! \brief
+     * Constructor for deepmd force provider, which initializes the deepmd::DeepPot object
+     * provide the information needed to calculate forces.
+     *
+     * \param[in] options  Options for the deepmd force provider
+     * \param[in] info     Additional info from Gromacs for model inference
+     */
+    deepmdForceProvider(const deepmdOptions& options, deepmdInferenceInfo& info, const MDLogger*& logger);
     ~deepmdForceProvider();
     
+    // fixed interface for IForceProvider
     void calculateForces(const ForceProviderInput& forceProviderInput,
                          ForceProviderOutput*      forceProviderOutput) override;
 
 private:
-    deepmd::DeepPot dp_;
-    
-    
+    std::unique_ptr<deepmd::DeepPot> dp_;
+
+    const deepmdOptions& options;
+
+    // get it from the deepmdModule, updated by notification subscription
+    deepmdInferenceInfo& inferenceInfo; 
+
+    // from the module
+    const MDLogger*& logger_;
+
 };
+
+/*! \brief
+ * Struct to hold part of the necessary data for inference
+ */
+struct deepmdInferenceInfo {
+
+    /* input */
+    std::vector<real> atomPosition_;
+
+    // the atom types, in for the model 
+    std::vector<int> atomType_;
+    // mapping between gromacs and models
+    std::vector<int> idxLookup_;
+
+    std::unique_ptr<PbcType> pbcType_;
+
+    std::vector<real> box_ = std::vector<real>(DIM*DIM, 0.0);
+
+    /* output */
+    double energy_ = 0.0;
+    std::vector<real> atomForce_;
+    std::vector<real> virial_;
+
+
+};
+
+
 
 } // namespace gmx
 

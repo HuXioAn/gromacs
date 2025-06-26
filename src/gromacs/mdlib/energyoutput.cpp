@@ -282,6 +282,11 @@ EnergyOutput::EnergyOutput(ener_file*                fp_ene,
 
     bEner_[F_ENNPOT] = mdModulesAddOutputToNNPotFieldRequest.energyOutputToNNPot_;
 
+    MDModulesEnergyOutputToDEEPMDRequestChecker mdModulesAddOutputToDEEPMDFieldRequest;
+    mdModulesNotifiers.simulationSetupNotifier_.notify(&mdModulesAddOutputToDEEPMDFieldRequest);
+
+    bEner_[F_DEEPMD] = mdModulesAddOutputToDEEPMDFieldRequest.energyOutputToDEEPMD_;
+
     // Counting the energy terms that will be printed and saving their names
     f_nre_ = 0;
     for (i = 0; i < F_NRE; i++)

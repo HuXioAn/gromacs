@@ -50,6 +50,9 @@
 #include "gromacs/mdrunutility/mdmodulesnotifiers.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/imdmodule.h"
+#include "gromacs/topology/mtop_util.h"
+#include "gromacs/topology/atoms.h"
+
 #include "gromacs/utility/keyvaluetreebuilder.h"
 
 #include "deepmdOptions.h"
@@ -66,12 +69,16 @@ class deepmdMDModule final : public IMDModule
 public:
     explicit deepmdMDModule() = default;
 
-    void subscribeToPreProcessingNotifications(MDModulesNotifiers* /*notifier*/) override 
+    void subscribeToPreProcessingNotifications(MDModulesNotifiers* notifier) override 
     {
         if (!options_.isActive())
         {
             return;
         }
+
+        const auto setLoggerFunction = [this](const MDLogger& logger)
+        { loggerPtr = &logger; };
+        notifier->preProcessingNotifier_.subscribe(setLoggerFunction);
 
     }
 
@@ -81,6 +88,27 @@ public:
         {
             return;
         }
+
+        const auto setTopologyFunction = [this](const gmx_mtop_t& top)
+        {   // setup the atom types (number) 
+            auto atoms = gmx_mtop_global_atoms(top);
+            auto numAtom = atoms.nr;
+            auto& atomTypeVec = inferenceInfo_.atomType_;
+
+            atomTypeVec.assign(numAtom, 0);
+
+            for (int i = 0; i < numAtom; ++i)
+            {
+                // TODO: no mapping to the model yet
+                atomTypeVec[i] = atoms.atom[i].atomnumber;
+            }
+        };
+        notifier->simulationSetupNotifier_.subscribe(setTopologyFunction);
+
+        // Add deepmd output to energy file
+        const auto requestEnergyOutput = [](MDModulesEnergyOutputToDEEPMDRequestChecker* energyOutputRequest)
+        { energyOutputRequest->energyOutputToDEEPMD_ = true; };
+        notifier->simulationSetupNotifier_.subscribe(requestEnergyOutput);
 
     }
 
@@ -92,7 +120,7 @@ public:
     {
         if (options_.isActive())
         {
-            deepmdForceProvider_ = std::make_unique<deepmdForceProvider>(options_.options());
+            deepmdForceProvider_ = std::make_unique<deepmdForceProvider>(options_.options(), inferenceInfo_, loggerPtr);
             forceProviders->addForceProvider(deepmdForceProvider_.get(), "DeepMD");
         }
     }
@@ -101,6 +129,14 @@ public:
 private:
     DeepmdOptionsProvider options_{};
     std::unique_ptr<deepmdForceProvider> deepmdForceProvider_{};
+
+    // initialzed in notifier handlers
+    deepmdInferenceInfo inferenceInfo_{};
+
+    // pointer to the logger from notifier
+    const MDLogger* loggerPtr;
+
+    
 };
 
 } // namespace
