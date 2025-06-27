@@ -25,7 +25,7 @@ struct deepmdInferenceInfo {
     // mapping between gromacs and models
     std::vector<int> idxLookup_;
 
-    // std::unique_ptr<PbcType> pbcType_;
+    bool pbcType_;
 
     std::vector<real> box_ = std::vector<real>(DIM*DIM, 0.0);
 

@@ -97,6 +97,15 @@ void DeepmdModel::prepareBox(matrix& box)
 
 void DeepmdModel::preparePbcType([[maybe_unused]] PbcType& pbcType)
 {
+
+    if (pbcType == PbcType::Xyz){ // all periodic
+        inferInfo_.pbcType_ = true;
+
+    } else if (pbcType == PbcType::No) { // no periodic
+        inferInfo_.pbcType_ = false;
+    }else {
+        GMX_THROW(InconsistentInputError("Not supuorted PBC type for DeepMD model: " + std::to_string(static_cast<int>(pbcType))));
+    }
     
 }
 
@@ -106,7 +115,12 @@ void DeepmdModel::evaluateModel()
     {
         GMX_THROW(InternalError("deepmd not initialized before evaluateModel() was called."));
     }
-    
+
+    // periodic boundary conditions
+    if (!inferInfo_.pbcType_)
+    {
+        inferInfo_.box_.resize(0); // no box needed
+    }
 
     dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_, 
             inferInfo_.atomPosition_, inferInfo_.atomType_ , inferInfo_.box_);
