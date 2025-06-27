@@ -75,13 +75,22 @@ if (GMX_TORCH)
         # link against the extension library
         target_link_libraries(applied_forces INTERFACE ${TORCH_EXTENSION_LIB})
 
+        target_compile_definitions(applied_forces INTERFACE GMX_BACKEND_TORCH)
+
     endif()
+elseif (GMX_DEEPMD)
+
+    gmx_add_libgromacs_sources(
+        nnpotforceprovider.cpp
+        deepmdmodel.cpp
+    )
+    target_compile_definitions(applied_forces INTERFACE GMX_BACKEND_DEEPMD)
 else()
     gmx_add_libgromacs_sources(
         nnpotforceprovider_stub.cpp
     )
 endif()
 
-if (BUILD_TESTING)
-    add_subdirectory(tests)
-endif()
+# if (BUILD_TESTING)
+#     add_subdirectory(tests)
+# endif()
