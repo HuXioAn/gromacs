@@ -198,7 +198,6 @@ enum
     F_DENSITYFITTING,
     F_EQM,
     F_ENNPOT,
-    F_DEEPMD,
     F_EPOT,
     F_EKIN,
     F_ETOT,
