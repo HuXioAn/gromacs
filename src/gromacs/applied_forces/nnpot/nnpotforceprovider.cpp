@@ -56,7 +56,14 @@
 
 #include "nnpotmodel.h"
 #include "nnpotoptions.h"
+
+#ifdef GMX_BACKEND_TORCH
 #include "torchmodel.h"
+#endif
+
+#ifdef GMX_BACKEND_DEEPMD
+#include "deepmdmodel.h"
+#endif
 
 namespace gmx
 {
@@ -76,6 +83,7 @@ NNPotForceProvider::NNPotForceProvider(const NNPotParameters& nnpotParameters, c
     {
         GMX_THROW(FileIOError("Model file does not exist: " + params_.modelFileName_));
     }
+#ifdef GMX_BACKEND_TORCH
     else if (modelPath.extension() == ".pt")
     {
         model_ = std::make_shared<TorchModel>(params_.modelFileName_, logger_);
@@ -84,6 +92,13 @@ NNPotForceProvider::NNPotForceProvider(const NNPotParameters& nnpotParameters, c
     {
         GMX_THROW(FileIOError("Unrecognized extension for model file: " + params_.modelFileName_));
     }
+#elif defined(GMX_BACKEND_DEEPMD)
+    else
+    {
+        model_ = std::make_shared<DeepmdModel>(params_.modelFileName_, logger_);
+    }
+#endif
+    
     model_->initModel();
 }
 

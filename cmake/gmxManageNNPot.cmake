@@ -35,7 +35,7 @@
 gmx_option_multichoice(GMX_NNPOT
     "Enable neural network potential interface."
     AUTO
-    AUTO TORCH OFF
+    AUTO TORCH DEEPMD OFF
 )
 
 if(TORCH_ALREADY_SEARCHED)
@@ -44,31 +44,52 @@ endif()
 
 if(NOT GMX_NNPOT STREQUAL "OFF")
 
-    find_package(Torch 2.0.0 QUIET)
-    set(TORCH_ALREADY_SEARCHED TRUE CACHE BOOL "True if a search for libtorch has already been done")
-    mark_as_advanced(TORCH_ALREADY_SEARCHED)
+    if (GMX_NNPOT STREQUAL "TORCH")
+        find_package(Torch 2.0.0 QUIET)
+        set(TORCH_ALREADY_SEARCHED TRUE CACHE BOOL "True if a search for libtorch has already been done")
+        mark_as_advanced(TORCH_ALREADY_SEARCHED)
 
-    if(Torch_FOUND)
-        # TORCH_LIBRARIES contain imported target "torch" that will set all flags and include paths etc
-        list(APPEND GMX_COMMON_LIBRARIES ${TORCH_LIBRARIES})
-        if(NOT FIND_TORCH_QUIETLY)
-            message(STATUS "Found Torch: Neural network potential support enabled.")
+        if(Torch_FOUND)
+            # TORCH_LIBRARIES contain imported target "torch" that will set all flags and include paths etc
+            list(APPEND GMX_COMMON_LIBRARIES ${TORCH_LIBRARIES})
+            if(NOT FIND_TORCH_QUIETLY)
+                message(STATUS "Found Torch: Neural network potential support enabled.")
+            endif()
+
+            # Check if the Torch version uses the correct ABI
+            if (${TORCH_CXX_FLAGS} MATCHES "-D_GLIBCXX_USE_CXX11_ABI=0")
+                message(FATAL_ERROR "Torch was compiled with the pre-cxx11 ABI. Please use a libtorch version "
+                                    "compiled with the cxx11 ABI, which is required for building GROMACS.")
+            endif()
+
+            set(GMX_TORCH ON)
+        elseif(GMX_NNPOT STREQUAL "TORCH")
+            message(FATAL_ERROR "Torch not found. Please install libtorch and add its installation prefix"
+                                " to CMAKE_PREFIX_PATH or set Torch_DIR to a directory containing "
+                                "a TorchConfig.cmake or torch-config.cmake file.")
+        else() # "AUTO"
+            if(NOT FIND_TORCH_QUIETLY)
+                message(STATUS "Torch not found. Neural network potential support will be disabled.")
+            endif()
         endif()
 
-        # Check if the Torch version uses the correct ABI
-        if (${TORCH_CXX_FLAGS} MATCHES "-D_GLIBCXX_USE_CXX11_ABI=0")
-            message(FATAL_ERROR "Torch was compiled with the pre-cxx11 ABI. Please use a libtorch version "
-                                "compiled with the cxx11 ABI, which is required for building GROMACS.")
-        endif()
+    elseif (GMX_NNPOT STREQUAL "DEEPMD")
 
-        set(GMX_TORCH ON)
-    elseif(GMX_NNPOT STREQUAL "TORCH")
-        message(FATAL_ERROR "Torch not found. Please install libtorch and add its installation prefix"
-                            " to CMAKE_PREFIX_PATH or set Torch_DIR to a directory containing "
-                            "a TorchConfig.cmake or torch-config.cmake file.")
-    else() # "AUTO"
-        if(NOT FIND_TORCH_QUIETLY)
-            message(STATUS "Torch not found. Neural network potential support will be disabled.")
+        find_package(DeePMD REQUIRED)
+        if (DeePMD_FOUND)
+            add_library(deepmd_includes INTERFACE) # for deepmd problem
+            get_target_property(deepmd_include_dir DeePMD::deepmd_cc INTERFACE_INCLUDE_DIRECTORIES)
+            target_include_directories(deepmd_includes INTERFACE
+                ${deepmd_include_dir}/deepmd
+            )
+            list(APPEND GMX_COMMON_LIBRARIES DeePMD::deepmd_cc deepmd_includes)
+            set(GMX_DEEPMD ON)
+        else()
+            message(FATAL_ERROR "DeePMD not found. Please install the DeePMD C++ library and add its installation prefix"
+                                " to CMAKE_PREFIX_PATH or set DeePMD_DIR to a directory containing "
+                                "a DeePMDConfig.cmake file.")
         endif()
     endif()
+
+
 endif()
