@@ -168,7 +168,7 @@ public:
 
 private:
 //! Make sure that model and model inputs are compatible
-#if !GMX_TORCH
+#if !(GMX_TORCH || GMX_DEEPMD)
     [[noreturn]] static
 #endif
             void

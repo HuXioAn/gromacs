@@ -386,7 +386,7 @@ void NNPotOptions::setWarninp(WarningHandler* wi)
     wi_ = wi;
 }
 
-#if !GMX_TORCH
+#if !(GMX_TORCH || GMX_DEEPMD)
 [[noreturn]]
 #endif
 void NNPotOptions::checkNNPotModel()
@@ -507,7 +507,8 @@ void NNPotOptions::checkNNPotModel()
         wi_->addWarning("Gradients will be computed with respect to first input to NN model "
                         + params_.modelInput_[0] + " instead of atom positions. Is this intended?");
     }
-
+#elif GMX_DEEPMD
+    return;
 #else
     GMX_THROW(InternalError(
             "Libtorch/NN backend is not linked into GROMACS, NNPot simulation is not possible."

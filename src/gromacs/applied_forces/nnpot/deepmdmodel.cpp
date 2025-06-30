@@ -78,6 +78,13 @@ void DeepmdModel::prepareAtomNumbers(std::vector<int>& atomTypes)
     atomType.resize(N);
     // usually it won't change
     std::memcpy(atomType.data(), atomTypes.data(), N * sizeof(int));
+
+    // fit deepmd
+    for (int i = 0; i < N; ++i)
+    {
+        atomType[i] -= 1; // deepmd starts from 0
+    }
+
 }
 
 void DeepmdModel::prepareBox(matrix& box)
@@ -193,27 +200,27 @@ bool DeepmdModel::outputsForces() const
 
 int DeepmdModel::getDevice()
 {
-    // check if environment variable GMX_NN_DEVICE is set (should be something like cuda:0 or cpu)
     if (const char* env = std::getenv("GMX_DEEPMD_DEVICE"))
     {   
-        // judge if it is a number
-        if (std::isdigit(env[0]))
-        {
-            int device = std::atoi(env);
-            return device; // return the device number
+        std::string envStr(env);
+
+        try {
+            int device = std::stoi(envStr);  
+            if (device >= 0) {
+                GMX_LOG(logger_->info).appendText("Using DeepMD model on device: " + envStr);
+                return device;
+            } else if (device == -1) {
+                GMX_LOG(logger_->info).appendText("Using DeepMD model on CPU.");
+                return -1;
+            } else {
+                GMX_THROW(InternalError("Invalid device index (negative): " + envStr));
+            }
+        } catch (const std::exception& e) {
+            GMX_THROW(InternalError("Invalid GMX_DEEPMD_DEVICE value: " + envStr));
         }
-        else if (std::string(env) == "-1")
-        {
-            return -1; // cpu
-        }
-        else
-        {
-            GMX_THROW(InternalError("Invalid GMX_DEEPMD_DEVICE value: " + std::string(env)));
-        }
-        
     }
 
-    return -1; // default to cpu if not set
+    return 0; // default to gpu0 if not set
 
 }
 

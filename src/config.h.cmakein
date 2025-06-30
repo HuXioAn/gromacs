@@ -494,6 +494,9 @@
 /* Define if we are building with Torch */
 #cmakedefine01 GMX_TORCH
 
+/* Define if we are building with deepmd */
+#cmakedefine01 GMX_DEEPMD
+
 /* Build using clang analyzer */
 #cmakedefine01 GMX_CLANG_ANALYZER
 
