@@ -58,15 +58,11 @@ void DeepmdModel::prepareAtomPositions(std::vector<RVec>& positions)
     auto& atomPos = inferInfo_.atomPosition_;
     atomPos.resize(3 * N);
 
-    if constexpr (sizeof(RVec) == 3 * sizeof(real)) { // nopadding
-        const real *rawPtr = reinterpret_cast<const real *>(positions.data());
-        std::memcpy(atomPos.data(), rawPtr, 3 * N * sizeof(real));
-    } else {
-        for (int i=0; i < N; i++) {
-            atomPos[i * 3] = positions[i][0];
-            atomPos[i * 3 + 1] = positions[i][1];
-            atomPos[i * 3 + 2] = positions[i][2];
-        }
+    // don't forget to convert to deepmd unit 
+    for (int i=0; i < N; i++) {
+        atomPos[i * 3] = positions[i][0] / c_dp2gmx;
+        atomPos[i * 3 + 1] = positions[i][1] / c_dp2gmx;
+        atomPos[i * 3 + 2] = positions[i][2] / c_dp2gmx; 
     }
     
 }
