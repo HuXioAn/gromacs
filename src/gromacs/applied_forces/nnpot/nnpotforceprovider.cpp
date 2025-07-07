@@ -95,7 +95,7 @@ NNPotForceProvider::NNPotForceProvider(const NNPotParameters& nnpotParameters, c
 #elif defined(GMX_BACKEND_DEEPMD)
     else
     {
-        model_ = std::make_shared<DeepmdModel>(params_.modelFileName_, logger_);
+        model_ = std::make_shared<DeepmdModel>(params_.modelFileName_, &idxLookup_, logger_);
     }
 #endif
     

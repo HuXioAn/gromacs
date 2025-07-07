@@ -22,8 +22,6 @@ struct deepmdInferenceInfo {
 
     // the atom types, in for the model 
     std::vector<int> atomType_;
-    // mapping between gromacs and models
-    std::vector<int> idxLookup_;
 
     bool pbcType_;
 
@@ -47,7 +45,7 @@ public:
      * \param[in] filename path to the Deepmd model file
      * \param[in] logger pointer to the MDLogger
      */
-    DeepmdModel(const std::string& filename, const MDLogger* logger);
+    DeepmdModel(const std::string& filename, const std::vector<int>* idxLookUp, const MDLogger* logger);
 
     ~DeepmdModel();
 
@@ -69,8 +67,9 @@ public:
     //! helper function to check if model outputs forces
     bool outputsForces() const override;
 
+private:
     //! determine which GPU to use depending on GMX_DEEPMD_DEVICE environment variable, -1 for cpu
-    int getDevice();
+    int getDevice(const t_commrec* cr);
 
 
 private:
@@ -89,7 +88,7 @@ private:
 
     deepmdInferenceInfo inferInfo_;
 
-
+    const std::vector<int>* g2LIndexLookUp_;
 };
 
 } // namespace gmx
