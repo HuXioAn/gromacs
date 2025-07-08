@@ -144,6 +144,8 @@ public:
         {
             LocalAtomSet atomSet1 = localAtomSetManager->add(nnpotOptions_.parameters().inpIndices_);
             nnpotOptions_.setLocalInputAtomSet(atomSet1);
+            LocalAtomSet ghostSet = localAtomSetManager->addGhost(nnpotOptions_.parameters().inpIndices_);
+            nnpotOptions_.setLocalInputGhostAtomSet(ghostSet);
             LocalAtomSet atomSet2 = localAtomSetManager->add(nnpotOptions_.parameters().mmIndices_);
             nnpotOptions_.setLocalMMAtomSet(atomSet2);
         };

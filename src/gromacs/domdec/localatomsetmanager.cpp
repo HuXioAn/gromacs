@@ -65,6 +65,7 @@ class LocalAtomSetManager::Impl
 {
 public:
     std::vector<std::unique_ptr<internal::LocalAtomSetData>> atomSetData_; /**< handles to the managed atom sets */
+    std::vector<std::unique_ptr<internal::GhostAtomSetData>> ghostAtomSetData_; /**< handles to the managed ghost atom sets */
 };
 
 /********************************************************************
@@ -87,11 +88,24 @@ LocalAtomSet LocalAtomSetManager::add(ArrayRef<const Index> globalAtomIndex)
     return LocalAtomSet(*impl_->atomSetData_.back());
 }
 
+LocalAtomSet LocalAtomSetManager::addGhost(ArrayRef<const Index> globalAtomIndex)
+{
+    impl_->ghostAtomSetData_.push_back(std::make_unique<internal::GhostAtomSetData>(globalAtomIndex));
+    return LocalAtomSet(*impl_->ghostAtomSetData_.back());
+}
+
+
+
 void LocalAtomSetManager::setIndicesInDomainDecomposition(const gmx_ga2la_t& ga2la)
 {
     for (const auto& atomSet : impl_->atomSetData_)
     {
         atomSet->setLocalAndCollectiveIndices(ga2la);
+    }
+
+    for (const auto& ghostAtomSet : impl_->ghostAtomSetData_)
+    {
+        ghostAtomSet->setLocalAndCollectiveIndices(ga2la);
     }
 }
 

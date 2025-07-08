@@ -204,6 +204,11 @@ void NNPotOptions::setLocalInputAtomSet(const LocalAtomSet& localInputAtomSet)
     params_.inpAtoms_ = std::make_unique<LocalAtomSet>(localInputAtomSet);
 }
 
+void NNPotOptions::setLocalInputGhostAtomSet(const LocalAtomSet& localInputGhostAtomSet)
+{
+    params_.inpGhostAtoms_ = std::make_unique<LocalAtomSet>(localInputGhostAtomSet);
+}
+
 void NNPotOptions::setLocalMMAtomSet(const LocalAtomSet& localMMAtomSet)
 {
     params_.mmAtoms_ = std::make_unique<LocalAtomSet>(localMMAtomSet);

@@ -87,6 +87,9 @@ struct NNPotParameters
     //! Local set of atoms that are part of the NN input region
     std::unique_ptr<LocalAtomSet> inpAtoms_;
 
+    //! Local set of ghost atoms that are part of the NN input region
+    std::unique_ptr<LocalAtomSet> inpGhostAtoms_;
+
     //! Indices of the atoms that are part of the MM region (default no MM atoms)
     std::vector<Index> mmIndices_;
     //! Local set of atoms that are part of the MM region
@@ -136,6 +139,8 @@ public:
 
     //! set local atom set for neural network input during simulation setup
     void setLocalInputAtomSet(const LocalAtomSet&);
+
+    void setLocalInputGhostAtomSet(const LocalAtomSet& localInputGhostAtomSet);
 
     //! set local MM atom set during simulation setup
     void setLocalMMAtomSet(const LocalAtomSet&);

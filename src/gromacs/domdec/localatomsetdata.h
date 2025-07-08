@@ -120,6 +120,17 @@ public:
     std::vector<int> localIndex_;
 };
 
+
+class GhostAtomSetData : public LocalAtomSetData
+{
+public:
+    using LocalAtomSetData::LocalAtomSetData;
+
+    void setLocalAndCollectiveIndices(const gmx_ga2la_t& ga2la);
+
+};
+
+
 } // namespace internal
 
 } // namespace gmx

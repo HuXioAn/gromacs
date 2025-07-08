@@ -93,6 +93,27 @@ void LocalAtomSetData::setLocalAndCollectiveIndices(const gmx_ga2la_t& ga2la)
     }
 }
 
+void GhostAtomSetData::setLocalAndCollectiveIndices(const gmx_ga2la_t& ga2la)
+{
+    /* Loop over all the atom indices of the set to check which ones are local ghost.
+     */
+    int numAtomsGlobal = globalIndex_.size();
+
+    localIndex_.resize(0);
+    collectiveIndex_.resize(0);
+
+    for (int iCollective = 0; iCollective < numAtomsGlobal; iCollective++)
+    {
+        if (const auto iLocalEntry = ga2la.find(globalIndex_[iCollective]))
+        { 
+            if (iLocalEntry->cell != 0){ // ghost
+                localIndex_.push_back(iLocalEntry->la);
+                collectiveIndex_.push_back(iCollective);
+            }
+        }
+    }
+}
+
 } // namespace internal
 
 } // namespace gmx

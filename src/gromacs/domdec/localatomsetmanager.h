@@ -93,6 +93,8 @@ public:
      */
     LocalAtomSet add(ArrayRef<const Index> globalAtomIndex);
 
+    LocalAtomSet addGhost(ArrayRef<const Index> globalAtomIndex);
+
     /*! \brief Recalculate local and collective indices from ga2la.
      * Uses global atom to local atom lookup structure to
      * update atom indices.
