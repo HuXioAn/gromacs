@@ -93,6 +93,12 @@ void LocalAtomSetData::setLocalAndCollectiveIndices(const gmx_ga2la_t& ga2la)
     }
 }
 
+GhostAtomSetData::GhostAtomSetData(ArrayRef<const Index> globalIndex) : LocalAtomSetData(globalIndex)
+{
+    localIndex_.clear();
+    collectiveIndex_.clear();
+}
+
 void GhostAtomSetData::setLocalAndCollectiveIndices(const gmx_ga2la_t& ga2la)
 {
     /* Loop over all the atom indices of the set to check which ones are local ghost.

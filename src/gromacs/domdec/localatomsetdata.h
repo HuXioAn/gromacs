@@ -124,7 +124,7 @@ public:
 class GhostAtomSetData : public LocalAtomSetData
 {
 public:
-    using LocalAtomSetData::LocalAtomSetData;
+    explicit GhostAtomSetData(ArrayRef<const Index> globalAtomIndex);
 
     void setLocalAndCollectiveIndices(const gmx_ga2la_t& ga2la);
 
