@@ -30,7 +30,7 @@ namespace {
 }
 
 
-DeepmdModel::DeepmdModel(const std::string& fileName, const std::vector<int>* idxLookUp, const MDLogger* logger) : g2LIndexLookUp_(idxLookUp), logger_(logger)
+DeepmdModel::DeepmdModel(const std::string& fileName, const MDLogger* logger) : logger_(logger)
 {
     modelFileName_ = fileName;
     if(!std::filesystem::exists(modelFileName_))
@@ -50,19 +50,15 @@ void DeepmdModel::initModel()
 
 void DeepmdModel::prepareAtomPositions(std::vector<RVec>& positions)
 {
-    const int N = positions.size(); // global number of atoms
+    const int N = positions.size(); // local + ghost
     auto& atomPos = inferInfo_.atomPosition_;
     atomPos.clear();
 
     for (int i = 0; i < N; ++i)
     {
-        if ((*g2LIndexLookUp_)[i] == -1) // local index 
-            continue; // skip ghost atoms
-        else {
-            atomPos.push_back(positions[i][0] / c_dp2gmx); 
-            atomPos.push_back(positions[i][1] / c_dp2gmx);
-            atomPos.push_back(positions[i][2] / c_dp2gmx);
-        }
+        atomPos.push_back(positions[i][0] / c_dp2gmx); 
+        atomPos.push_back(positions[i][1] / c_dp2gmx);
+        atomPos.push_back(positions[i][2] / c_dp2gmx);
     }
     
 }
@@ -75,11 +71,7 @@ void DeepmdModel::prepareAtomNumbers(std::vector<int>& atomTypes)
 
     for (int i = 0; i < N; ++i)
     {
-        if ((*g2LIndexLookUp_)[i] == -1) // local index
-            continue; // skip ghost atoms
-        else {
-            atomType.push_back(atomTypes[i] - 1);
-        }
+        atomType.push_back(atomTypes[i] - 1);
     }
 
 }
@@ -129,7 +121,7 @@ void DeepmdModel::evaluateModel()
     GMX_ASSERT(inferInfo_.atomPosition_.size() / DIM == inferInfo_.atomType_.size(),
                "Number of atom positions and atom types must match.");
 
-    dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_, 
+    dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_, inferInfo_.atomEnergy_, inferInfo_.atomVirial_,
             inferInfo_.atomPosition_, inferInfo_.atomType_ , inferInfo_.box_);
 
 
@@ -147,21 +139,18 @@ void DeepmdModel::getOutputs(std::vector<int>& indices, gmx_enerdata_t& enerd, c
         GMX_THROW(InternalError("Model outputs not ready before getOutputs() was called."));
     }
 
-        const int N = indices.size(); // global number of the group input (Protein, System, as specified)
+    const int N = indices.size(); // local + ghost
 
-    enerd.term[F_ENNPOT] = inferInfo_.energy_ * e_dp2gmx * lambda; 
+    real localEnergy = 0;
+    for (int i = 0; i < localAtomNum; ++i)
+    {
+        localEnergy += inferInfo_.atomEnergy_[i];
+    }
+    enerd.term[F_ENNPOT] = localEnergy * e_dp2gmx * lambda; 
 
-    int j = 0; // index for results
     for (int i = 0; i < N; ++i){
-        if (indices[i] == -1) 
-        {
-            continue; // skip non local
-        } else {
-            for (int m = 0; m < DIM; ++m)
-            forces[indices[i]][m] = inferInfo_.atomForce_[j * DIM + m] * f_dp2gmx * lambda; // convert to gromacs unit
-
-            j++;
-        }
+        for (int m = 0; m < DIM; ++m)
+        forces[indices[i]][m] = inferInfo_.atomForce_[i * DIM + m] * f_dp2gmx * lambda; 
     }
     
     outputReady_ = false;
@@ -199,7 +188,7 @@ int DeepmdModel::getDevice(const t_commrec* cr)
         GMX_THROW(InternalError("Communication record is not set for DeepMD model."));
     }
 
-    return cr_->rankInDefaultCommunicator;
+    return cr->rankInDefaultCommunicator;
 
 }
 

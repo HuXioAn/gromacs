@@ -31,6 +31,8 @@ struct deepmdInferenceInfo {
     double energy_ = 0.0;
     std::vector<real> atomForce_;
     std::vector<real> virial_;
+    std::vector<real> atomEnergy_;
+    std::vector<real> atomVirial_;
 
 };
 
@@ -45,7 +47,7 @@ public:
      * \param[in] filename path to the Deepmd model file
      * \param[in] logger pointer to the MDLogger
      */
-    DeepmdModel(const std::string& filename, const std::vector<int>* idxLookUp, const MDLogger* logger);
+    DeepmdModel(const std::string& filename, const MDLogger* logger);
 
     ~DeepmdModel();
 
@@ -88,7 +90,6 @@ private:
 
     deepmdInferenceInfo inferInfo_;
 
-    const std::vector<int>* g2LIndexLookUp_;
 };
 
 } // namespace gmx

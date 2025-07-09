@@ -95,7 +95,7 @@ NNPotForceProvider::NNPotForceProvider(const NNPotParameters& nnpotParameters, c
 #elif defined(GMX_BACKEND_DEEPMD)
     else
     {
-        model_ = std::make_shared<DeepmdModel>(params_.modelFileName_, &idxLookup_, logger_);
+        model_ = std::make_shared<DeepmdModel>(params_.modelFileName_, logger_);
     }
 #endif
     
@@ -109,6 +109,8 @@ void NNPotForceProvider::calculateForces(const ForceProviderInput& fInput, Force
     // store a pointer to the communication record
     cr_ = &(fInput.cr_);
     model_->setCommRec(cr_);
+
+    model_->localAtomNum = params_.inpAtoms_->numAtomsLocal();
 
     // prepare inputs for NN model
     // order in input vector is the same as in mdp file
@@ -152,71 +154,45 @@ void NNPotForceProvider::calculateForces(const ForceProviderInput& fInput, Force
 
 void NNPotForceProvider::gatherAtomNumbersIndices()
 {
-    // this might not be the most efficient solution, since we are throwing away most of the
-    // vectors here in case of NNP/MM
 
-    // create lookup table for local atom indices needed for hybrid ML/MM
-    // -1 is used as a flag for atoms that are not local / not in the input
-    // used to distribute forces to correct local indices as the NN input tensor does not contain all atoms
-    idxLookup_.assign(params_.numAtoms_, -1);
-    atomNumbers_.assign(params_.numAtoms_, 0);
+    const auto localNNAtomNum = params_.inpAtoms_->numAtomsLocal() + params_.inpGhostAtoms_->numAtomsLocal();
+
+    // resize vectors to the number of local NN atoms
+    idxLookup_.resize(localNNAtomNum);
+    atomNumbers_.resize(localNNAtomNum);
+
 
     int lIdx, gIdx;
-    for (size_t i = 0; i < params_.inpAtoms_->numAtomsLocal(); i++)
+    for (size_t i = 0; i < params_.inpAtoms_->numAtomsLocal(); i++) // local atoms
     {
         lIdx = params_.inpAtoms_->localIndex()[i];
         gIdx = params_.inpAtoms_->globalIndex()[params_.inpAtoms_->collectiveIndex()[i]];
-        // TODO: make sure that atom number indexing is correct
-        atomNumbers_[gIdx] = params_.atoms_.atom[gIdx].atomnumber;
-        idxLookup_[gIdx]   = lIdx;
+        atomNumbers_[i] = params_.atoms_.atom[gIdx].atomnumber;
+        idxLookup_[i]   = lIdx;
     }
 
-    // distribute atom numbers to all ranks
-    if (havePPDomainDecomposition(cr_))
+    int iGhost;
+    for (size_t i = params_.inpAtoms_->numAtomsLocal(); i < localNNAtomNum; i++) // ghost atoms
     {
-        gmx_sumi(params_.numAtoms_, atomNumbers_.data(), cr_);
+        iGhost = i - params_.inpAtoms_->numAtomsLocal();
+        lIdx = params_.inpGhostAtoms_->localIndex()[iGhost];
+        gIdx = params_.inpGhostAtoms_->globalIndex()[params_.inpGhostAtoms_->collectiveIndex()[iGhost]];
+        atomNumbers_[i] = params_.atoms_.atom[gIdx].atomnumber;
+        idxLookup_[i]   = lIdx;
     }
 
-    // remove unused elements in atomNumbers_, and idxLookup
-    auto atIt  = atomNumbers_.begin();
-    auto idxIt = idxLookup_.begin();
-    while (atIt != atomNumbers_.end() && idxIt != idxLookup_.end())
-    {
-        if (*atIt == 0)
-        {
-            atIt  = atomNumbers_.erase(atIt);
-            idxIt = idxLookup_.erase(idxIt);
-        }
-        else
-        {
-            ++atIt;
-            ++idxIt;
-        }
-    }
 }
 
 void NNPotForceProvider::gatherAtomPositions(ArrayRef<const RVec> pos)
 {
     // collect atom positions
-    // at this point, we already have the atom numbers and indices, so we can fill the positions
     size_t numInput = idxLookup_.size();
 
-    // reset positions to zero, because we might not have all atoms in the input
-    positions_.assign(numInput, RVec({ 0.0, 0.0, 0.0 }));
+    positions_.resize(numInput);
 
     for (size_t i = 0; i < numInput; i++)
     {
-        // if value in lookup table is -1, the atom is not local to this rank
-        if (idxLookup_[i] != -1)
-        {
-            positions_[i] = pos[idxLookup_[i]];
-        }
-    }
-
-    // in case of dom dec, distribute positions to all ranks
-    if (havePPDomainDecomposition(cr_))
-    {
-        gmx_sum(3 * numInput, positions_.data()->as_vec(), cr_);
+        positions_[i] = pos[idxLookup_[i]];
     }
 }
 

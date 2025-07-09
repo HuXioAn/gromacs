@@ -89,6 +89,8 @@ public:
 
     //! helper function to check if model outputs forces
     virtual bool outputsForces() const = 0;
+
+    int localAtomNum;
 };
 
 } // namespace gmx
