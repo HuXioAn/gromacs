@@ -37,6 +37,7 @@ gmx_option_multichoice(GMX_NNPOT
     AUTO
     AUTO TORCH DEEPMD OFF
 )
+option(GMX_DEEPMD_INFERENCE_MULTI_MPI ON)
 
 if(TORCH_ALREADY_SEARCHED)
     set(FIND_TORCH_QUIETLY ON)
@@ -84,6 +85,8 @@ if(NOT GMX_NNPOT STREQUAL "OFF")
             )
             list(APPEND GMX_COMMON_LIBRARIES DeePMD::deepmd_cc deepmd_includes)
             set(GMX_DEEPMD ON)
+            message(STATUS "Enable DeepMD potential backend ${deepmd_include_dir}")
+            message(STATUS "DeepMD potential multi MPI inference is ${GMX_DEEPMD_INFERENCE_MULTI_MPI}")
         else()
             message(FATAL_ERROR "DeePMD not found. Please install the DeePMD C++ library and add its installation prefix"
                                 " to CMAKE_PREFIX_PATH or set DeePMD_DIR to a directory containing "

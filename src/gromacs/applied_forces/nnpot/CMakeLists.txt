@@ -85,6 +85,11 @@ elseif (GMX_DEEPMD)
         deepmdmodel.cpp
     )
     target_compile_definitions(applied_forces INTERFACE GMX_BACKEND_DEEPMD)
+    if (GMX_DEEPMD_INFERENCE_MULTI_MPI)
+        target_compile_definitions(applied_forces INTERFACE GMX_DEEPMD_INFERENCE_MULTI_MPI=1)
+    else()
+        target_compile_definitions(applied_forces INTERFACE GMX_DEEPMD_INFERENCE_MULTI_MPI=0)
+    endif()
 else()
     gmx_add_libgromacs_sources(
         nnpotforceprovider_stub.cpp
