@@ -110,6 +110,68 @@ void DeepmdModel::preparePbcType([[maybe_unused]] PbcType& pbcType)
     
 }
 
+static void build_inputnlist(deepmd::InputNlist& nlist,
+                      const std::vector<real>& posi3,
+                      const int localAtomNum,
+                      float rcut) {
+
+    assert(posi3.size() % 3 == 0);
+    int natoms_total = posi3.size() / 3;
+
+    std::vector<int> ilist; // local atom
+    for (int i = 0; i < natoms_total; ++i) {
+        if (i < localAtomNum) {
+            ilist.push_back(i);
+        }
+    }
+    int inum = ilist.size();
+
+    // allocate internal buffers
+    int* ilist_buf = new int[inum];
+    int* numneigh_buf = new int[inum];
+    int** firstneigh_buf = new int*[inum];
+
+    const double rcut2 = rcut * rcut;
+
+    for (int i = 0; i < inum; ++i) {
+        ilist_buf[i] = ilist[i];
+        int ii = ilist[i];
+
+        std::vector<int> neighs;
+        for (int j = 0; j < natoms_total; ++j) {
+            if (j == ii) continue;
+
+            double dx = posi3[3*j + 0] - posi3[3*ii + 0];
+            double dy = posi3[3*j + 1] - posi3[3*ii + 1];
+            double dz = posi3[3*j + 2] - posi3[3*ii + 2];
+            double r2 = dx*dx + dy*dy + dz*dz;
+            if (r2 < rcut2) {
+                neighs.push_back(j);  
+            }
+        }
+
+        numneigh_buf[i] = neighs.size();
+        int* neigh_array = new int[neighs.size()];
+        std::copy(neighs.begin(), neighs.end(), neigh_array);
+        firstneigh_buf[i] = neigh_array;
+    }
+
+    nlist.inum = inum;
+    nlist.ilist = ilist_buf;
+    nlist.numneigh = numneigh_buf;
+    nlist.firstneigh = firstneigh_buf;
+}
+
+
+static void free_inputnlist(deepmd::InputNlist& nlist) {
+    for (int i = 0; i < nlist.inum; ++i) {
+        delete[] nlist.firstneigh[i];
+    }
+    delete[] nlist.firstneigh;
+    delete[] nlist.numneigh;
+    delete[] nlist.ilist;
+}
+
 void DeepmdModel::evaluateModel()
 {
     if (!isInit_)
@@ -129,8 +191,17 @@ void DeepmdModel::evaluateModel()
     const int N = inferInfo_.atomType_.size();
     //std::cout<< "Rank " << this->cr_->rankInDefaultCommunicator << " inferInfo_.atomType_.size()=" << N  << std::endl;
 #if GMX_DEEPMD_INFERENCE_MULTI_MPI
+
+    // nlist
+    build_inputnlist(inferInfo_.inputNlist_, inferInfo_.atomPosition_, localAtomNum, 0.6 / c_dp2gmx);
+
     dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_, inferInfo_.atomEnergy_, inferInfo_.atomVirial_,
-            inferInfo_.atomPosition_, inferInfo_.atomType_ , inferInfo_.box_);
+            inferInfo_.atomPosition_, inferInfo_.atomType_ , inferInfo_.box_, N-localAtomNum, inferInfo_.inputNlist_, 0);
+
+    free_inputnlist(inferInfo_.inputNlist_);
+
+    // dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_, inferInfo_.atomEnergy_, inferInfo_.atomVirial_,
+    //         inferInfo_.atomPosition_, inferInfo_.atomType_ , inferInfo_.box_);
 #else
     if (MAIN(cr_)){
         dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_, inferInfo_.atomEnergy_, inferInfo_.atomVirial_,
@@ -167,6 +238,9 @@ void DeepmdModel::getOutputs(std::vector<int>& indices, gmx_enerdata_t& enerd, c
     {
         localEnergy += inferInfo_.atomEnergy_[i];
     }
+
+    std::cerr << "local Energy: " << localEnergy << " Energy: " << inferInfo_.energy_ << std::endl;
+
     enerd.term[F_ENNPOT] = localEnergy * e_dp2gmx * lambda; 
 
     for (int i = 0; i < N; ++i){

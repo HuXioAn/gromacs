@@ -27,6 +27,8 @@ struct deepmdInferenceInfo {
 
     std::vector<real> box_ = std::vector<real>(DIM*DIM, 0.0);
 
+    deepmd::InputNlist inputNlist_;
+
     /* output */
     double energy_ = 0.0;
     std::vector<real> atomForce_;

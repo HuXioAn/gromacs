@@ -37,7 +37,7 @@ gmx_option_multichoice(GMX_NNPOT
     AUTO
     AUTO TORCH DEEPMD OFF
 )
-option(GMX_DEEPMD_INFERENCE_MULTI_MPI ON)
+option(GMX_DEEPMD_INFERENCE_MULTI_MPI "Do multiple rank inference" ON)
 
 if(TORCH_ALREADY_SEARCHED)
     set(FIND_TORCH_QUIETLY ON)
