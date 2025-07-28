@@ -112,6 +112,8 @@ void NNPotForceProvider::calculateForces(const ForceProviderInput& fInput, Force
     model_->setCommRec(cr_);
 
     model_->localAtomNum = params_.inpAtoms_->numAtomsLocal();
+    model_->wholeSystemAtomNum = params_.numAtoms_;
+    model_->idxLookupGlobalPtr_ = &idxLookupGlobal_;
 
     // prepare inputs for NN model
     // order in input vector is the same as in mdp file
@@ -161,6 +163,7 @@ void NNPotForceProvider::gatherAtomNumbersIndices()
     // resize vectors to the number of local NN atoms
     idxLookup_.resize(localNNAtomNum);
     atomNumbers_.resize(localNNAtomNum);
+    idxLookupGlobal_.resize(localNNAtomNum);
 
 
     int lIdx, gIdx;
@@ -170,6 +173,8 @@ void NNPotForceProvider::gatherAtomNumbersIndices()
         gIdx = params_.inpAtoms_->globalIndex()[params_.inpAtoms_->collectiveIndex()[i]];
         atomNumbers_[i] = params_.atoms_.atom[gIdx].atomnumber;
         idxLookup_[i]   = lIdx;
+
+        idxLookupGlobal_[i] = gIdx;
     }
 
     int iGhost;
@@ -180,6 +185,8 @@ void NNPotForceProvider::gatherAtomNumbersIndices()
         gIdx = params_.inpGhostAtoms_->globalIndex()[params_.inpGhostAtoms_->collectiveIndex()[iGhost]];
         atomNumbers_[i] = params_.atoms_.atom[gIdx].atomnumber;
         idxLookup_[i]   = lIdx;
+
+        idxLookupGlobal_[i] = gIdx;
     }
 #else
     // this might not be the most efficient solution, since we are throwing away most of the

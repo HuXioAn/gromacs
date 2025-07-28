@@ -36,6 +36,8 @@ struct deepmdInferenceInfo {
     std::vector<real> atomEnergy_;
     std::vector<real> atomVirial_;
 
+    std::vector<real> ghostForceAggregation_; 
+
 };
 
 /*! \brief

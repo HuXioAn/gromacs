@@ -91,6 +91,10 @@ public:
     virtual bool outputsForces() const = 0;
 
     int localAtomNum;
+
+    int wholeSystemAtomNum;
+
+    std::vector<int>* idxLookupGlobalPtr_;
 };
 
 } // namespace gmx

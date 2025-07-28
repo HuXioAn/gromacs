@@ -97,6 +97,8 @@ private:
     //! global index lookup table to map indices from model input to global atom indices
     std::vector<int> idxLookup_;
 
+    std::vector<int> idxLookupGlobal_;
+
     //! local copy of simulation box
     matrix box_;
 

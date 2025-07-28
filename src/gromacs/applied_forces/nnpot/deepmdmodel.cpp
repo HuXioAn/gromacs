@@ -193,7 +193,7 @@ void DeepmdModel::evaluateModel()
 #if GMX_DEEPMD_INFERENCE_MULTI_MPI
 
     // nlist
-    build_inputnlist(inferInfo_.inputNlist_, inferInfo_.atomPosition_, localAtomNum, 0.6 / c_dp2gmx);
+    build_inputnlist(inferInfo_.inputNlist_, inferInfo_.atomPosition_, localAtomNum, 0.7 / c_dp2gmx);
 
     dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_, inferInfo_.atomEnergy_, inferInfo_.atomVirial_,
             inferInfo_.atomPosition_, inferInfo_.atomType_ , inferInfo_.box_, N-localAtomNum, inferInfo_.inputNlist_, 0);
@@ -230,16 +230,34 @@ void DeepmdModel::getOutputs(std::vector<int>& indices, gmx_enerdata_t& enerd, c
     const int N = indices.size(); // local + ghost
     const int Nlocal = this->localAtomNum;
 
-    std::cout<< "Rank " << this->cr_->rankInDefaultCommunicator << " N=" << N << " Nlocal="<< Nlocal << std::endl;
-
 #if GMX_DEEPMD_INFERENCE_MULTI_MPI
 
     enerd.term[F_ENNPOT] = inferInfo_.energy_ * e_dp2gmx * lambda;
 
+    inferInfo_.ghostForceAggregation_.assign(3 * this->wholeSystemAtomNum, 0.0);
+
+    for (int i = Nlocal; i < N; ++i)
+    {
+        const auto& idx = this->idxLookupGlobalPtr_->at(i);
+
+        inferInfo_.ghostForceAggregation_[idx * DIM]     = inferInfo_.atomForce_[i * DIM];
+        inferInfo_.ghostForceAggregation_[idx * DIM + 1] = inferInfo_.atomForce_[i * DIM + 1];
+        inferInfo_.ghostForceAggregation_[idx * DIM + 2] = inferInfo_.atomForce_[i * DIM + 2];
+    }
+
+    if (havePPDomainDecomposition(cr_))
+    {
+        gmx_sum(inferInfo_.ghostForceAggregation_.size(), static_cast<real*>(inferInfo_.ghostForceAggregation_.data()), cr_);
+    }
+
+
     for (int i = 0; i < Nlocal; ++i){
-        forces[indices[i]][0] += inferInfo_.atomForce_[i * DIM] * f_dp2gmx * lambda;
-        forces[indices[i]][1] += inferInfo_.atomForce_[i * DIM + 1] * f_dp2gmx * lambda;
-        forces[indices[i]][2] += inferInfo_.atomForce_[i * DIM + 2] * f_dp2gmx * lambda;
+        const auto& idxLocal = indices[i];
+        const auto& idxGlobal = this->idxLookupGlobalPtr_->at(i);
+
+        forces[idxLocal][0] += ((inferInfo_.atomForce_[i * DIM] + inferInfo_.ghostForceAggregation_[idxGlobal * DIM]) * f_dp2gmx * lambda);
+        forces[idxLocal][1] += ((inferInfo_.atomForce_[i * DIM + 1] + inferInfo_.ghostForceAggregation_[idxGlobal * DIM + 1]) * f_dp2gmx * lambda);
+        forces[idxLocal][2] += ((inferInfo_.atomForce_[i * DIM + 2] + inferInfo_.ghostForceAggregation_[idxGlobal * DIM + 2]) * f_dp2gmx * lambda);
     }
 #else
     const bool modelOutputsForces = outputsForces();
