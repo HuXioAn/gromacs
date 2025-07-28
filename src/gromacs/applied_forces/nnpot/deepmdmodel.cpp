@@ -233,20 +233,13 @@ void DeepmdModel::getOutputs(std::vector<int>& indices, gmx_enerdata_t& enerd, c
     std::cout<< "Rank " << this->cr_->rankInDefaultCommunicator << " N=" << N << " Nlocal="<< Nlocal << std::endl;
 
 #if GMX_DEEPMD_INFERENCE_MULTI_MPI
-    real localEnergy = 0;
-    for (int i = 0; i < localAtomNum; ++i)
-    {
-        localEnergy += inferInfo_.atomEnergy_[i];
-    }
 
-    std::cerr << "local Energy: " << localEnergy << " Energy: " << inferInfo_.energy_ << std::endl;
+    enerd.term[F_ENNPOT] = inferInfo_.energy_ * e_dp2gmx * lambda;
 
-    enerd.term[F_ENNPOT] = localEnergy * e_dp2gmx * lambda; 
-
-    for (int i = 0; i < N; ++i){
-        forces[indices[i]][0] = inferInfo_.atomForce_[i * DIM] * f_dp2gmx * lambda;
-        forces[indices[i]][1] = inferInfo_.atomForce_[i * DIM + 1] * f_dp2gmx * lambda;
-        forces[indices[i]][2] = inferInfo_.atomForce_[i * DIM + 2] * f_dp2gmx * lambda;
+    for (int i = 0; i < Nlocal; ++i){
+        forces[indices[i]][0] += inferInfo_.atomForce_[i * DIM] * f_dp2gmx * lambda;
+        forces[indices[i]][1] += inferInfo_.atomForce_[i * DIM + 1] * f_dp2gmx * lambda;
+        forces[indices[i]][2] += inferInfo_.atomForce_[i * DIM + 2] * f_dp2gmx * lambda;
     }
 #else
     const bool modelOutputsForces = outputsForces();
