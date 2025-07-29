@@ -148,9 +148,13 @@ void NNPotForceProvider::calculateForces(const ForceProviderInput& fInput, Force
         }
     }
 
+    model_->createNeighbList(params_);
     model_->evaluateModel();
-
+#if defined(GMX_BACKEND_DEEPMD)
+    model_->getOutputs(params_,idxLookup_, fOutput->enerd_, fOutput->forceWithVirial_.force_);
+#else
     model_->getOutputs(idxLookup_, fOutput->enerd_, fOutput->forceWithVirial_.force_);
+#endif
 }
 
 void NNPotForceProvider::gatherAtomNumbersIndices()
@@ -162,7 +166,10 @@ void NNPotForceProvider::gatherAtomNumbersIndices()
     idxLookup_.resize(localNNAtomNum);
     atomNumbers_.resize(localNNAtomNum);
 
-
+    std::cout<< "Rank " << this->cr_->rankInDefaultCommunicator<< " params_.inpAtoms_->numAtomsLocal() " << params_.inpAtoms_->numAtomsLocal() 
+    << " params_.inpGhostAtoms_->numAtomsLocal()="<<params_.inpGhostAtoms_->numAtomsLocal()<< " localNNAtomNum " << localNNAtomNum 
+    << " params_.mmAtoms_->numAtomsLocal()="<<params_.mmAtoms_->numAtomsLocal()
+    << " params_.mmGhostAtoms_->numAtomsLocal()="<<params_.mmGhostAtoms_->numAtomsLocal() <<std::endl;
     int lIdx, gIdx;
     for (size_t i = 0; i < params_.inpAtoms_->numAtomsLocal(); i++) // local atoms
     {
@@ -170,6 +177,7 @@ void NNPotForceProvider::gatherAtomNumbersIndices()
         gIdx = params_.inpAtoms_->globalIndex()[params_.inpAtoms_->collectiveIndex()[i]];
         atomNumbers_[i] = params_.atoms_.atom[gIdx].atomnumber;
         idxLookup_[i]   = lIdx;
+        //std::cout<< "Rank " << this->cr_->rankInDefaultCommunicator<< " Local atoms idxLookup_["<< i <<"]=" << idxLookup_[i] << " params_.inpAtoms_->numAtomsLocal() " << params_.inpAtoms_->numAtomsLocal() << " localNNAtomNum " << localNNAtomNum <<std::endl;
     }
 
     int iGhost;
@@ -180,6 +188,7 @@ void NNPotForceProvider::gatherAtomNumbersIndices()
         gIdx = params_.inpGhostAtoms_->globalIndex()[params_.inpGhostAtoms_->collectiveIndex()[iGhost]];
         atomNumbers_[i] = params_.atoms_.atom[gIdx].atomnumber;
         idxLookup_[i]   = lIdx;
+        //std::cout<< "Rank " << this->cr_->rankInDefaultCommunicator << " Ghost atoms idxLookup_["<< i <<"]=" << idxLookup_[i] << " params_.inpGhostAtoms_->numAtomsLocal() " << params_.inpGhostAtoms_->numAtomsLocal() << " iGhost="<< iGhost <<std::endl;
     }
 #else
     // this might not be the most efficient solution, since we are throwing away most of the

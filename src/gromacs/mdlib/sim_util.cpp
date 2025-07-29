@@ -41,6 +41,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 
 #include <array>
 #include <filesystem>
@@ -661,7 +662,7 @@ static void computeSpecialForces(FILE*                fplog,
                                               box,
                                               *cr);
         ForceProviderOutput forceProviderOutput(forceWithVirialMtsLevel0, enerd);
-
+        //std::cout<< "Rank "<< cr->rankInDefaultCommunicator << " forceWithVirialMtsLevel0->force_.size() " << forceWithVirialMtsLevel0->force().size()<< std::endl;
         /* Collect forces from modules */
         forceProviders->calculateForces(forceProviderInput, &forceProviderOutput);
     }
@@ -2230,7 +2231,7 @@ void do_force(FILE*                         fplog,
     {
         // Communication often happens for special forces, so we should close the balancing region here
         ddBalanceRegionHandler.closeAfterForceComputationCpu();
-
+        std::cout<<"Rank "<<cr->rankInDefaultCommunicator<< " x.unpaddedArrayRef().size()="<<x.unpaddedArrayRef().size() <<std::endl;
         computeSpecialForces(fplog,
                              cr,
                              inputrec,
@@ -2253,7 +2254,8 @@ void do_force(FILE*                         fplog,
                              ed,
                              stepWork.doNeighborSearch);
     }
-
+    //std::cout << "in do_forces "<< std::endl;
+    //std::cout << "dd->haloExchange is "<< (cr->dd->haloExchange ? "initialized" : "null") << std::endl;
     if (simulationWork.havePpDomainDecomposition && stepWork.computeForces && stepWork.useGpuFHalo
         && domainWork.haveCpuLocalForceWork)
     {
@@ -2373,6 +2375,7 @@ void do_force(FILE*                         fplog,
 
             if (stepWork.useGpuFHalo)
             {
+                //std::cout<< "Rank "<< cr->rankInDefaultCommunicator << " useGpuFHalo"<< std::endl;
                 // If there exist CPU forces, data from halo exchange should accumulate into these
                 bool accumulateForces = domainWork.haveCpuLocalForceWork;
                 FixedCapacityVector<GpuEventSynchronizer*, 2> gpuForceHaloDependencies;
@@ -2394,8 +2397,10 @@ void do_force(FILE*                         fplog,
 
                 // Without MTS or with MTS at slow steps with uncombined forces we need to
                 // communicate the fast forces
+                //std::cout<< "Rank "<< cr->rankInDefaultCommunicator << "dd->haloExchange " << (cr->dd->haloExchange!=nullptr) << " No gpu halo forceOutMtsLevel0.forceWithShiftForces().force().size() " << forceOutMtsLevel0.forceWithShiftForces().force().size()<< std::endl;
                 if (!simulationWork.useMts || !stepWork.combineMtsForcesBeforeHaloExchange)
                 {
+                    //std::cout<< "Rank "<< cr->rankInDefaultCommunicator << " No gpu halo - if (!simulationWork.useMts || !stepWork.combineMtsForcesBeforeHaloExchange) forceOutMtsLevel0.forceWithShiftForces().force().size() " << forceOutMtsLevel0.forceWithShiftForces().force().size()<< std::endl;
                     dd_move_f(cr->dd, &forceOutMtsLevel0.forceWithShiftForces(), wcycle);
                 }
                 // With MTS we need to communicate the slow or combined (in forceOutMtsLevel1) forces

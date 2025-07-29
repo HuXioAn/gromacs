@@ -226,6 +226,12 @@ void dd_move_x(struct gmx_domdec_t* dd, const matrix box, gmx::ArrayRef<gmx::RVe
  */
 void dd_move_f(struct gmx_domdec_t* dd, gmx::ForceWithShiftForces* forceWithShiftForces, gmx_wallcycle* wcycle);
 
+/*! \brief Sum the forces over the neighboring cells for special forces
+ *
+ * right now called only in the deepmd module
+ */
+void dd_move_f_specialForces(gmx_domdec_t* dd, const gmx::ArrayRef<gmx::RVec>& f);
+
 /*! \brief Reset all the statistics and counters for total run counting */
 void reset_dd_statistics_counters(struct gmx_domdec_t* dd);
 

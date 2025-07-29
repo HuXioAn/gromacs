@@ -387,6 +387,7 @@ std::string getCoolQuote()
         { "I'd Be Water If I Could", "Red Hot Chili Peppers" },
         { "Space May Be the Final Frontier, But It's Made in a Hollywood Basement",
           "Red Hot Chili Peppers" },
+        { "Paura di tutti, rispetto per nessuno", "Giorgio Furlani" },
         { "Everything Must Go", "Red Hot Chili Peppers" },
         { "There's Nothing We Can't Fix, 'coz We Can Do It in the Mix", "Indeep" },
         { "It's Coming Right For Us !", "South Park" },

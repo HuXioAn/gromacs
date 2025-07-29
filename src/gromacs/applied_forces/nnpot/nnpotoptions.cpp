@@ -214,6 +214,11 @@ void NNPotOptions::setLocalMMAtomSet(const LocalAtomSet& localMMAtomSet)
     params_.mmAtoms_ = std::make_unique<LocalAtomSet>(localMMAtomSet);
 }
 
+void NNPotOptions::setLocalMMGhostAtomSet(const LocalAtomSet& localMMGhostAtomSet)
+{
+    params_.mmGhostAtoms_ = std::make_unique<LocalAtomSet>(localMMGhostAtomSet);
+}
+
 void NNPotOptions::modifyTopology(gmx_mtop_t* top)
 {
     // Exit if module is not active

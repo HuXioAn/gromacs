@@ -38,6 +38,7 @@
  * \author Lukas Müllender <lukas.muellender@gmail.com>
  * \ingroup module_applied_forces
  */
+#include <iostream>
 #include "gmxpre.h"
 
 #include "nnpot.h"
@@ -148,6 +149,9 @@ public:
             nnpotOptions_.setLocalInputGhostAtomSet(ghostSet);
             LocalAtomSet atomSet2 = localAtomSetManager->add(nnpotOptions_.parameters().mmIndices_);
             nnpotOptions_.setLocalMMAtomSet(atomSet2);
+            LocalAtomSet ghostSet2 = localAtomSetManager->addGhost(nnpotOptions_.parameters().mmIndices_);
+            nnpotOptions_.setLocalMMGhostAtomSet(ghostSet2);
+            std::cout<< "In nnpot.cpp nnpotOptions_.parameters().inpIndices_.size()=" << nnpotOptions_.parameters().inpIndices_.size() << " nnpotOptions_.parameters().mmIndices_=" << nnpotOptions_.parameters().mmIndices_.size()<<std::endl;
         };
         notifier->simulationSetupNotifier_.subscribe(setLocalAtomSetFunction);
 

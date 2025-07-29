@@ -94,6 +94,7 @@ struct NNPotParameters
     std::vector<Index> mmIndices_;
     //! Local set of atoms that are part of the MM region
     std::unique_ptr<LocalAtomSet> mmAtoms_;
+    std::unique_ptr<LocalAtomSet> mmGhostAtoms_;
 
     //! User defined input to NN model (4 options as of now)
     std::vector<std::string> modelInput_{ "", "", "", "" };
@@ -144,6 +145,8 @@ public:
 
     //! set local MM atom set during simulation setup
     void setLocalMMAtomSet(const LocalAtomSet&);
+
+    void setLocalMMGhostAtomSet(const LocalAtomSet& localMMGhostAtomSet);
 
     //! modify topology of the system during preprocessing
     void modifyTopology(gmx_mtop_t*);

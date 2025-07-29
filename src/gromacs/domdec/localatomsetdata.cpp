@@ -44,6 +44,7 @@
 
 #include <algorithm>
 #include <numeric>
+#include <iostream>
 
 #include "gromacs/domdec/ga2la.h"
 
@@ -70,7 +71,7 @@ void LocalAtomSetData::setLocalAndCollectiveIndices(const gmx_ga2la_t& ga2la)
     /* Loop over all the atom indices of the set to check which ones are local.
      * cf. dd_make_local_group_indices in groupcoord.cpp
      */
-    int numAtomsGlobal = globalIndex_.size();
+    const int numAtomsGlobal = globalIndex_.size();
 
     /* Clear vector without changing capacity,
      * because we expect the size of the vectors to vary little. */
@@ -79,6 +80,7 @@ void LocalAtomSetData::setLocalAndCollectiveIndices(const gmx_ga2la_t& ga2la)
 
     for (int iCollective = 0; iCollective < numAtomsGlobal; iCollective++)
     {
+        //std::cout<< "LocalAtomSetData::setLocalAndCollectiveIndices globalIndex_["<<iCollective<<"]="<< globalIndex_[iCollective] << " globalIndex_.size()="<<globalIndex_.size() <<std::endl;
         if (const int* iLocal = ga2la.findHome(globalIndex_[iCollective]))
         {
             /* Save the atoms index in the local atom numbers array */
@@ -91,10 +93,15 @@ void LocalAtomSetData::setLocalAndCollectiveIndices(const gmx_ga2la_t& ga2la)
             collectiveIndex_.push_back(iCollective);
         }
     }
+    std::cout<< "In LocalAtomSetData::setLocalAndCollectiveIndices globalIndex_.size()="<<globalIndex_.size() << " localIndex_.size()=" <<localIndex_.size() <<std::endl;
 }
 
 GhostAtomSetData::GhostAtomSetData(ArrayRef<const Index> globalIndex) : LocalAtomSetData(globalIndex)
 {
+    /*
+    * need to clear localIndex_ and collectiveIndex_ to have correct ghost list
+    * in case of single MPI rank setLocalAndCollectiveIndices() is never triggered
+    */
     localIndex_.clear();
     collectiveIndex_.clear();
 }
@@ -103,21 +110,25 @@ void GhostAtomSetData::setLocalAndCollectiveIndices(const gmx_ga2la_t& ga2la)
 {
     /* Loop over all the atom indices of the set to check which ones are local ghost.
      */
-    int numAtomsGlobal = globalIndex_.size();
+    const int numAtomsGlobal = globalIndex_.size();
+    //std::cout<< "In GhostAtomSetData::setLocalAndCollectiveIndices globalIndex_.size()="<<globalIndex_.size() <<std::endl;
 
     localIndex_.resize(0);
     collectiveIndex_.resize(0);
 
     for (int iCollective = 0; iCollective < numAtomsGlobal; iCollective++)
-    {
+    {   
+        //std::cout<< "GhostAtomSetData::setLocalAndCollectiveIndices globalIndex_["<<iCollective<<"]="<< globalIndex_[iCollective] <<std::endl;
         if (const auto iLocalEntry = ga2la.find(globalIndex_[iCollective]))
-        { 
+        {
+            //std::cout<< "GhostAtomSetData::setLocalAndCollectiveIndices globalIndex_["<<iCollective<<"]="<< globalIndex_[iCollective] << " iLocalEntry->cell="<<iLocalEntry->cell<<std::endl; 
             if (iLocalEntry->cell != 0){ // ghost
                 localIndex_.push_back(iLocalEntry->la);
                 collectiveIndex_.push_back(iCollective);
             }
         }
     }
+    std::cout<< "In GhostAtomSetData::setLocalAndCollectiveIndices globalIndex_.size()="<<globalIndex_.size()<< " localIndex_.size()=" <<localIndex_.size() <<std::endl;
 }
 
 } // namespace internal

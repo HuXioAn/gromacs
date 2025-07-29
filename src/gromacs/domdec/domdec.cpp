@@ -45,6 +45,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 
 #include <algorithm>
 #include <array>
@@ -458,6 +459,81 @@ static void dd_move_f_aggregating(gmx_domdec_t* dd, gmx::ForceWithShiftForces* f
                             fshift[is][d] += receiveBuffer[n][d];
                         }
                     }
+                    n++;
+                }
+            }
+        }
+        nzone /= 2;
+    }
+}
+
+
+
+void dd_move_f_specialForces(gmx_domdec_t* dd, const gmx::ArrayRef<gmx::RVec>& f)
+{
+    gmx_domdec_comm_t& comm    = *dd->comm;
+    int                nzone   = dd->zones.numZones() / 2;
+    int                nat_tot = comm.atomRanges.end(DDAtomRanges::Type::Zones);
+    for (int d = dd->ndim - 1; d >= 0; d--)
+    {
+        /* Only forces in domains near the PBC boundaries need to
+           consider PBC in the treatment of fshift */
+        const bool applyScrewPbc = (dd->unitCellInfo.haveScrewPBC && dd->dim[d] == XX);
+        
+        /* Loop over the pulses */
+        const gmx_domdec_comm_dim_t& cd = comm.cd[d];
+        for (int p = cd.numPulses() - 1; p >= 0; p--)
+        {
+            const gmx_domdec_ind_t&   ind = cd.ind[p];
+            DDBufferAccess<gmx::RVec> receiveBufferAccess(comm.rvecBuffer, ind.nsend[nzone + 1]);
+            gmx::ArrayRef<gmx::RVec>& receiveBuffer = receiveBufferAccess.buffer;
+
+            nat_tot -= ind.nrecv[nzone + 1];
+
+            DDBufferAccess<gmx::RVec> sendBufferAccess(
+                    comm.rvecBuffer2, cd.receiveInPlace ? 0 : ind.nrecv[nzone + 1]);
+
+            gmx::ArrayRef<gmx::RVec> sendBuffer;
+            if (cd.receiveInPlace)
+            {
+                sendBuffer = gmx::arrayRefFromArray(f.data() + nat_tot, ind.nrecv[nzone + 1]);
+            }
+            else
+            {
+                sendBuffer = sendBufferAccess.buffer;
+                int j      = 0;
+                for (int zone = 0; zone < nzone; zone++)
+                {
+                    for (int i = ind.cell2at0[zone]; i < ind.cell2at1[zone]; i++)
+                    {
+                        sendBuffer[j++] = f[i];
+                    }
+                }
+            }
+            /* Communicate the forces */
+            ddSendrecv(dd, d, dddirForward, sendBuffer, receiveBuffer);
+            /* Add the received forces */
+            int n = 0;
+            if (!applyScrewPbc)
+            {
+                std::cout<< "In dd_move_f_specialForces not applyScrewPbc" <<std::endl;
+                for (int j : ind.index)
+                {
+                    for (int d = 0; d < DIM; d++)
+                    {
+                        f[j][d] += receiveBuffer[n][d];
+                    }
+                    n++;
+                }
+            }
+            else
+            {
+                for (int j : ind.index)
+                {
+                    /* Rotate the force */
+                    f[j][XX] += receiveBuffer[n][XX];
+                    f[j][YY] -= receiveBuffer[n][YY];
+                    f[j][ZZ] -= receiveBuffer[n][ZZ];
                     n++;
                 }
             }

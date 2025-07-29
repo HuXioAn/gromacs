@@ -40,9 +40,11 @@
  */
 #ifndef GMX_APPLIED_FORCES_NNPOTMODEL_H
 #define GMX_APPLIED_FORCES_NNPOTMODEL_H
+#pragma once
 
 #include "gromacs/math/vectypes.h"
 #include "gromacs/utility/arrayref.h"
+#include "gromacs/applied_forces/nnpot/nnpotoptions.h"
 
 struct t_commrec;
 struct gmx_enerdata_t;
@@ -78,10 +80,13 @@ public:
     virtual void preparePbcType(PbcType&)                 = 0;
     //! \}
 
+    virtual void createNeighbList(const NNPotParameters& params) = 0;
+
     //! call inference on NN model
     virtual void evaluateModel() = 0;
 
     //! retrieve NN model outputs
+    virtual void getOutputs(const NNPotParameters& params, std::vector<int>&, gmx_enerdata_t&, const ArrayRef<RVec>&) = 0;
     virtual void getOutputs(std::vector<int>&, gmx_enerdata_t&, const ArrayRef<RVec>&) = 0;
 
     //! set communication record for possible communication of input/output data between ranks
