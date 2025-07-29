@@ -74,6 +74,10 @@ public:
     //! \{
     virtual void prepareAtomPositions(std::vector<RVec>&) = 0;
     virtual void prepareAtomNumbers(std::vector<int>&)    = 0;
+
+    virtual void prepareAtomPositionsPara(std::vector<RVec>&) {}
+    virtual void prepareAtomNumbersPara(std::vector<int>&) {}
+
     virtual void prepareBox(matrix&)                      = 0;
     virtual void preparePbcType(PbcType&)                 = 0;
     //! \}
@@ -81,8 +85,14 @@ public:
     //! call inference on NN model
     virtual void evaluateModel() = 0;
 
+    virtual void evaluateModelPara() {}
+
     //! retrieve NN model outputs
     virtual void getOutputs(std::vector<int>&, gmx_enerdata_t&, const ArrayRef<RVec>&) = 0;
+
+    virtual void getOutputsPara(std::vector<int>&, gmx_enerdata_t&, const ArrayRef<RVec>&) {}
+
+    virtual void compareOutput() {}
 
     //! set communication record for possible communication of input/output data between ranks
     virtual void setCommRec(const t_commrec*) = 0;
@@ -94,7 +104,8 @@ public:
 
     int wholeSystemAtomNum;
 
-    std::vector<int>* idxLookupGlobalPtr_;
+    std::vector<int>* idxLookupGlobalMainPtr_;
+    std::vector<int>* idxLookupGlobalParaPtr_;
 };
 
 } // namespace gmx

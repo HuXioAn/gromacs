@@ -60,12 +60,18 @@ public:
 
     // inout for the model, however, only save the reference to the inference info, for later compute 
     void prepareAtomPositions(std::vector<RVec>& positions) override;
-    void prepareAtomNumbers(std::vector<int>& atomTypes) override;
+    void prepareAtomNumbers(std::vector<int>& atomNumbers) override;
+    void prepareAtomPositionsPara(std::vector<RVec>& positions) override;
+    void prepareAtomNumbersPara(std::vector<int>& atomNumbers) override;
     void prepareBox(matrix& box) override;
     void preparePbcType(PbcType& pbcType) override;
 
     void evaluateModel() override;
+    void evaluateModelPara() override;
     void getOutputs(std::vector<int>& indices, gmx_enerdata_t& enerd, const ArrayRef<RVec>& forces) override;
+    void getOutputsPara(std::vector<int>& indices, gmx_enerdata_t& enerd, const ArrayRef<RVec>& forces) override;
+
+    void compareOutput() override;
 
     //! Set communication record for possible communication of input/output data between ranks
     void setCommRec(const t_commrec* cr) override;
@@ -84,15 +90,17 @@ private:
 
     //! flag to check if deepmd is initialized
     bool isInit_ = false;
-    bool outputReady_ = false;
-
+    bool outputReadyMain_ = false;
+    bool outputReadyPara_ = false;
 
     //! pointer to the communication record
     const t_commrec* cr_ = nullptr;
     //! pointer to the MDLogger
     const MDLogger* logger_ = nullptr;
 
-    deepmdInferenceInfo inferInfo_;
+    deepmdInferenceInfo inferInfoMain_;
+
+    deepmdInferenceInfo inferInfoPara_;
 
 };
 

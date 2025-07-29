@@ -71,9 +71,12 @@ namespace gmx
 
 NNPotForceProvider::NNPotForceProvider(const NNPotParameters& nnpotParameters, const MDLogger* logger) :
     params_(nnpotParameters),
-    positions_(params_.numAtoms_, RVec({ 0.0, 0.0, 0.0 })),
-    atomNumbers_(params_.numAtoms_, -1),
-    idxLookup_(params_.numAtoms_, -1),
+    positionsMain_(params_.numAtoms_, RVec({ 0.0, 0.0, 0.0 })),
+    atomNumbersMain_(params_.numAtoms_, -1),
+    idxLookupMain_(params_.numAtoms_, -1),
+    positionsPara_(params_.numAtoms_, RVec({ 0.0, 0.0, 0.0 })),
+    atomNumbersPara_(params_.numAtoms_, -1),
+    idxLookupPara_(params_.numAtoms_, -1),
     box_{ { 0.0, 0.0, 0.0 }, { 0.0, 0.0, 0.0 }, { 0.0, 0.0, 0.0 } },
     logger_(logger),
     cr_(params_.cr_)
@@ -113,57 +116,49 @@ void NNPotForceProvider::calculateForces(const ForceProviderInput& fInput, Force
 
     model_->localAtomNum = params_.inpAtoms_->numAtomsLocal();
     model_->wholeSystemAtomNum = params_.numAtoms_;
-    model_->idxLookupGlobalPtr_ = &idxLookupGlobal_;
+    model_->idxLookupGlobalMainPtr_ = &idxLookupGlobalMain_;
+    model_->idxLookupGlobalParaPtr_ = &idxLookupGlobalPara_;
 
-    // prepare inputs for NN model
-    // order in input vector is the same as in mdp file
-    for (const std::string& input : params_.modelInput_)
-    {
-        if (input.empty())
-        {
-            continue;
-        }
-        else if (input == "atom-positions")
-        {
-            gatherAtomPositions(fInput.x_);
-            model_->prepareAtomPositions(positions_);
-        }
-        else if (input == "atom-numbers")
-        {
-            model_->prepareAtomNumbers(atomNumbers_);
-        }
-        else if (input == "box")
-        {
-            copy_mat(fInput.box_, box_);
-            model_->prepareBox(box_);
-        }
-        else if (input == "pbc")
-        {
-            copy_mat(fInput.box_, box_);
-            t_pbc pbc;
-            set_pbc(&pbc, *(params_.pbcType_), box_); // might not be necessary
-            model_->preparePbcType(*(params_.pbcType_));
-        }
-        else
-        {
-            GMX_THROW(InconsistentInputError("Unknown input to NN model: " + input));
-        }
-    }
+    // atom pos
+    gatherAtomPositions(fInput.x_);
+
+    model_->prepareAtomPositions(positionsMain_);
+    model_->prepareAtomPositionsPara(positionsPara_);
+
+    // atom numbers
+    model_->prepareAtomNumbers(atomNumbersMain_);
+    model_->prepareAtomNumbersPara(atomNumbersPara_);
+
+    // box
+    copy_mat(fInput.box_, box_);
+    model_->prepareBox(box_);
+
+    // pbc
+    copy_mat(fInput.box_, box_);
+    t_pbc pbc;
+    set_pbc(&pbc, *(params_.pbcType_), box_); // might not be necessary
+    model_->preparePbcType(*(params_.pbcType_));
+
 
     model_->evaluateModel();
+    model_->evaluateModelPara();
 
-    model_->getOutputs(idxLookup_, fOutput->enerd_, fOutput->forceWithVirial_.force_);
+    model_->getOutputs(idxLookupMain_, fOutput->enerd_, fOutput->forceWithVirial_.force_);
+    model_->getOutputsPara(idxLookupPara_, fOutput->enerd_, fOutput->forceWithVirial_.force_);
+
+    model_->compareOutput();
 }
 
 void NNPotForceProvider::gatherAtomNumbersIndices()
 {
 #if defined(GMX_BACKEND_DEEPMD) && GMX_DEEPMD_INFERENCE_MULTI_MPI
+{
     const auto localNNAtomNum = params_.inpAtoms_->numAtomsLocal() + params_.inpGhostAtoms_->numAtomsLocal();
 
     // resize vectors to the number of local NN atoms
-    idxLookup_.resize(localNNAtomNum);
-    atomNumbers_.resize(localNNAtomNum);
-    idxLookupGlobal_.resize(localNNAtomNum);
+    idxLookupPara_.resize(localNNAtomNum);
+    atomNumbersPara_.resize(localNNAtomNum);
+    idxLookupGlobalPara_.resize(localNNAtomNum);
 
 
     int lIdx, gIdx;
@@ -171,10 +166,10 @@ void NNPotForceProvider::gatherAtomNumbersIndices()
     {
         lIdx = params_.inpAtoms_->localIndex()[i];
         gIdx = params_.inpAtoms_->globalIndex()[params_.inpAtoms_->collectiveIndex()[i]];
-        atomNumbers_[i] = params_.atoms_.atom[gIdx].atomnumber;
-        idxLookup_[i]   = lIdx;
+        atomNumbersPara_[i] = params_.atoms_.atom[gIdx].atomnumber;
+        idxLookupPara_[i]   = lIdx;
 
-        idxLookupGlobal_[i] = gIdx;
+        idxLookupGlobalPara_[i] = gIdx;
     }
 
     int iGhost;
@@ -183,20 +178,23 @@ void NNPotForceProvider::gatherAtomNumbersIndices()
         iGhost = i - params_.inpAtoms_->numAtomsLocal();
         lIdx = params_.inpGhostAtoms_->localIndex()[iGhost];
         gIdx = params_.inpGhostAtoms_->globalIndex()[params_.inpGhostAtoms_->collectiveIndex()[iGhost]];
-        atomNumbers_[i] = params_.atoms_.atom[gIdx].atomnumber;
-        idxLookup_[i]   = lIdx;
+        atomNumbersPara_[i] = params_.atoms_.atom[gIdx].atomnumber;
+        idxLookupPara_[i]   = lIdx;
 
-        idxLookupGlobal_[i] = gIdx;
+        idxLookupGlobalPara_[i] = gIdx;
     }
-#else
+}
+// #else
     // this might not be the most efficient solution, since we are throwing away most of the
     // vectors here in case of NNP/MM
 
     // create lookup table for local atom indices needed for hybrid ML/MM
     // -1 is used as a flag for atoms that are not local / not in the input
     // used to distribute forces to correct local indices as the NN input tensor does not contain all atoms
-    idxLookup_.assign(params_.numAtoms_, -1);
-    atomNumbers_.assign(params_.numAtoms_, 0);
+{
+    idxLookupMain_.assign(params_.numAtoms_, -1);
+    atomNumbersMain_.assign(params_.numAtoms_, 0);
+    idxLookupGlobalMain_.assign(params_.numAtoms_, 0);
     //std::cout<<"Rank " << cr_->rankInDefaultCommunicator << " params_.numAtoms_ " << params_.numAtoms_ <<std::endl;
     int lIdx, gIdx;
     for (size_t i = 0; i < params_.inpAtoms_->numAtomsLocal(); i++)
@@ -204,32 +202,38 @@ void NNPotForceProvider::gatherAtomNumbersIndices()
         lIdx = params_.inpAtoms_->localIndex()[i];
         gIdx = params_.inpAtoms_->globalIndex()[params_.inpAtoms_->collectiveIndex()[i]];
         // TODO: make sure that atom number indexing is correct
-        atomNumbers_[gIdx] = params_.atoms_.atom[gIdx].atomnumber;
-        idxLookup_[gIdx]   = lIdx;
+        atomNumbersMain_[gIdx] = params_.atoms_.atom[gIdx].atomnumber;
+        idxLookupMain_[gIdx]   = lIdx;
+        idxLookupGlobalMain_[gIdx] = gIdx;
     }
 
     // distribute atom numbers to all ranks
     if (havePPDomainDecomposition(cr_))
     {
-        gmx_sumi(params_.numAtoms_, atomNumbers_.data(), cr_);
+        gmx_sumi(params_.numAtoms_, atomNumbersMain_.data(), cr_);
+        gmx_sumi(params_.numAtoms_, idxLookupGlobalMain_.data(), cr_);
     }
 
     // remove unused elements in atomNumbers_, and idxLookup
-    auto atIt  = atomNumbers_.begin();
-    auto idxIt = idxLookup_.begin();
-    while (atIt != atomNumbers_.end() && idxIt != idxLookup_.end())
+    auto atIt  = atomNumbersMain_.begin();
+    auto idxIt = idxLookupMain_.begin();
+    auto idxGlobalIt = idxLookupGlobalMain_.begin();
+    while (atIt != atomNumbersMain_.end() && idxIt != idxLookupMain_.end())
     {
         if (*atIt == 0)
         {
-            atIt  = atomNumbers_.erase(atIt);
-            idxIt = idxLookup_.erase(idxIt);
+            atIt  = atomNumbersMain_.erase(atIt);
+            idxIt = idxLookupMain_.erase(idxIt);
+            idxGlobalIt = idxLookupGlobalMain_.erase(idxGlobalIt);
         }
         else
         {
             ++atIt;
             ++idxIt;
+            ++idxGlobalIt;
         }
     }
+}
 
 #endif
 }
@@ -237,37 +241,41 @@ void NNPotForceProvider::gatherAtomNumbersIndices()
 void NNPotForceProvider::gatherAtomPositions(ArrayRef<const RVec> pos)
 {
 #if defined(GMX_BACKEND_DEEPMD) && GMX_DEEPMD_INFERENCE_MULTI_MPI
+{
     // collect atom positions
-    size_t numInput = idxLookup_.size();
+    size_t numInput = idxLookupPara_.size();
 
-    positions_.resize(numInput);
+    positionsPara_.resize(numInput);
 
     for (size_t i = 0; i < numInput; i++)
     {
-        positions_[i] = pos[idxLookup_[i]];
+        positionsPara_[i] = pos[idxLookupPara_[i]];
     }
-#else
+}
+// #else
+{
     // collect atom positions
     // at this point, we already have the atom numbers and indices, so we can fill the positions
-    size_t numInput = idxLookup_.size();
+    size_t numInput = idxLookupMain_.size();
 
     // reset positions to zero, because we might not have all atoms in the input
-    positions_.assign(numInput, RVec({ 0.0, 0.0, 0.0 }));
+    positionsMain_.assign(numInput, RVec({ 0.0, 0.0, 0.0 }));
 
     for (size_t i = 0; i < numInput; i++)
     {
         // if value in lookup table is -1, the atom is not local to this rank
-        if (idxLookup_[i] != -1)
+        if (idxLookupMain_[i] != -1)
         {
-            positions_[i] = pos[idxLookup_[i]];
+            positionsMain_[i] = pos[idxLookupMain_[i]];
         }
     }
 
     // in case of dom dec, distribute positions to all ranks
     if (havePPDomainDecomposition(cr_))
     {
-        gmx_sum(3 * numInput, positions_.data()->as_vec(), cr_);
+        gmx_sum(3 * numInput, positionsMain_.data()->as_vec(), cr_);
     }
+}
 
 #endif
 }

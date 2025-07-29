@@ -89,15 +89,25 @@ private:
     std::shared_ptr<INNPotModel> model_;
 
     //! vector storing all atom positions
-    std::vector<RVec> positions_;
+    std::vector<RVec> positionsMain_;
 
     //! vector storing all atomic numbers
-    std::vector<int> atomNumbers_;
+    std::vector<int> atomNumbersMain_;
 
     //! global index lookup table to map indices from model input to global atom indices
-    std::vector<int> idxLookup_;
+    std::vector<int> idxLookupMain_;
 
-    std::vector<int> idxLookupGlobal_;
+    std::vector<int> idxLookupGlobalMain_;
+    std::vector<int> idxLookupGlobalPara_;
+
+    //! vector storing all atom positions
+    std::vector<RVec> positionsPara_;
+
+    //! vector storing all atomic numbers
+    std::vector<int> atomNumbersPara_;
+
+    //! global index lookup table to map indices from model input to global atom indices
+    std::vector<int> idxLookupPara_;
 
     //! local copy of simulation box
     matrix box_;
