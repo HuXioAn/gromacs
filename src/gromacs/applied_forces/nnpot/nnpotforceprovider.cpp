@@ -150,6 +150,8 @@ void NNPotForceProvider::calculateForces(const ForceProviderInput& fInput, Force
         }
     }
 
+    model_->prepareIdxLookup(idxLookup_);
+
     model_->evaluateModel();
 
     model_->getOutputs(idxLookup_, fOutput->enerd_, fOutput->forceWithVirial_.force_);
@@ -157,38 +159,6 @@ void NNPotForceProvider::calculateForces(const ForceProviderInput& fInput, Force
 
 void NNPotForceProvider::gatherAtomNumbersIndices()
 {
-#if defined(GMX_BACKEND_DEEPMD) && GMX_DEEPMD_INFERENCE_MULTI_MPI
-    const auto localNNAtomNum = params_.inpAtoms_->numAtomsLocal() + params_.inpGhostAtoms_->numAtomsLocal();
-
-    // resize vectors to the number of local NN atoms
-    idxLookup_.resize(localNNAtomNum);
-    atomNumbers_.resize(localNNAtomNum);
-    idxLookupGlobal_.resize(localNNAtomNum);
-
-
-    int lIdx, gIdx;
-    for (size_t i = 0; i < params_.inpAtoms_->numAtomsLocal(); i++) // local atoms
-    {
-        lIdx = params_.inpAtoms_->localIndex()[i];
-        gIdx = params_.inpAtoms_->globalIndex()[params_.inpAtoms_->collectiveIndex()[i]];
-        atomNumbers_[i] = params_.atoms_.atom[gIdx].atomnumber;
-        idxLookup_[i]   = lIdx;
-
-        idxLookupGlobal_[i] = gIdx;
-    }
-
-    int iGhost;
-    for (size_t i = params_.inpAtoms_->numAtomsLocal(); i < localNNAtomNum; i++) // ghost atoms
-    {
-        iGhost = i - params_.inpAtoms_->numAtomsLocal();
-        lIdx = params_.inpGhostAtoms_->localIndex()[iGhost];
-        gIdx = params_.inpGhostAtoms_->globalIndex()[params_.inpGhostAtoms_->collectiveIndex()[iGhost]];
-        atomNumbers_[i] = params_.atoms_.atom[gIdx].atomnumber;
-        idxLookup_[i]   = lIdx;
-
-        idxLookupGlobal_[i] = gIdx;
-    }
-#else
     // this might not be the most efficient solution, since we are throwing away most of the
     // vectors here in case of NNP/MM
 
@@ -231,22 +201,10 @@ void NNPotForceProvider::gatherAtomNumbersIndices()
         }
     }
 
-#endif
 }
 
 void NNPotForceProvider::gatherAtomPositions(ArrayRef<const RVec> pos)
 {
-#if defined(GMX_BACKEND_DEEPMD) && GMX_DEEPMD_INFERENCE_MULTI_MPI
-    // collect atom positions
-    size_t numInput = idxLookup_.size();
-
-    positions_.resize(numInput);
-
-    for (size_t i = 0; i < numInput; i++)
-    {
-        positions_[i] = pos[idxLookup_[i]];
-    }
-#else
     // collect atom positions
     // at this point, we already have the atom numbers and indices, so we can fill the positions
     size_t numInput = idxLookup_.size();
@@ -269,7 +227,6 @@ void NNPotForceProvider::gatherAtomPositions(ArrayRef<const RVec> pos)
         gmx_sum(3 * numInput, positions_.data()->as_vec(), cr_);
     }
 
-#endif
 }
 
 } // namespace gmx

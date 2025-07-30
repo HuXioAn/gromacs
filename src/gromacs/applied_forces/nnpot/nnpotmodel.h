@@ -76,6 +76,7 @@ public:
     virtual void prepareAtomNumbers(std::vector<int>&)    = 0;
     virtual void prepareBox(matrix&)                      = 0;
     virtual void preparePbcType(PbcType&)                 = 0;
+    virtual void prepareIdxLookup(std::vector<int>&) {}
     //! \}
 
     //! call inference on NN model

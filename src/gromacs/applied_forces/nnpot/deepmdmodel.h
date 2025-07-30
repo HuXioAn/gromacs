@@ -27,6 +27,8 @@ struct deepmdInferenceInfo {
 
     std::vector<real> box_ = std::vector<real>(DIM*DIM, 0.0);
 
+    std::vector<int> idxLookup_;
+    std::vector<int> localInputMapping_;
     deepmd::InputNlist inputNlist_;
 
     /* output */
@@ -63,6 +65,7 @@ public:
     void prepareAtomNumbers(std::vector<int>& atomTypes) override;
     void prepareBox(matrix& box) override;
     void preparePbcType(PbcType& pbcType) override;
+    void prepareIdxLookup(std::vector<int>& idxLookup) override;
 
     void evaluateModel() override;
     void getOutputs(std::vector<int>& indices, gmx_enerdata_t& enerd, const ArrayRef<RVec>& forces) override;

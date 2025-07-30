@@ -55,7 +55,7 @@ void DeepmdModel::initModel()
 
 void DeepmdModel::prepareAtomPositions(std::vector<RVec>& positions)
 {
-    const int N = positions.size(); // local + ghost
+    const int N = positions.size(); // global NN num
     auto& atomPos = inferInfo_.atomPosition_;
     atomPos.clear();
 
@@ -108,6 +108,26 @@ void DeepmdModel::preparePbcType([[maybe_unused]] PbcType& pbcType)
         GMX_THROW(InconsistentInputError("Not supuorted PBC type for DeepMD model: " + std::to_string(static_cast<int>(pbcType))));
     }
     
+}
+
+void DeepmdModel::prepareIdxLookup(std::vector<int>& idxLookup)
+{
+    inferInfo_.idxLookup_ = idxLookup;
+    inferInfo_.localInputMapping_.clear();
+
+    for(int i = 0; i < idxLookup.size(); ++i)
+    {
+        if (idxLookup[i] == -1) continue; // skip ghost atoms
+        inferInfo_.localInputMapping_.push_back(i);
+    }
+
+    for(int i = 0; i < idxLookup.size(); ++i)
+    {
+        if (idxLookup[i] != -1) continue; // skip local atoms
+        inferInfo_.localInputMapping_.push_back(i);
+    }
+
+
 }
 
 static void build_inputnlist(deepmd::InputNlist& nlist,
@@ -188,24 +208,32 @@ void DeepmdModel::evaluateModel()
     GMX_ASSERT(inferInfo_.atomPosition_.size() / DIM == inferInfo_.atomType_.size(),
                "Number of atom positions and atom types must match.");
 
-    const int N = inferInfo_.atomType_.size();
-    //std::cout<< "Rank " << this->cr_->rankInDefaultCommunicator << " inferInfo_.atomType_.size()=" << N  << std::endl;
+    const int N = inferInfo_.atomType_.size(); // global NN atom num
+
 #if GMX_DEEPMD_INFERENCE_MULTI_MPI
 
-    // nlist
-    build_inputnlist(inferInfo_.inputNlist_, inferInfo_.atomPosition_, localAtomNum, 0.7 / c_dp2gmx);
+    std::vector<int> mappedAtomNum;
+    std::vector<real> mappedAtomPos;
 
-    dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_, inferInfo_.atomEnergy_, inferInfo_.atomVirial_,
-            inferInfo_.atomPosition_, inferInfo_.atomType_ , inferInfo_.box_, N-localAtomNum, inferInfo_.inputNlist_, 0);
+    for (int i = 0; i < inferInfo_.localInputMapping_.size(); ++i)
+    {
+        mappedAtomNum.push_back(inferInfo_.atomType_[inferInfo_.localInputMapping_[i]]);
+        mappedAtomPos.push_back(inferInfo_.atomPosition_[inferInfo_.localInputMapping_[i] * DIM + 0]);
+        mappedAtomPos.push_back(inferInfo_.atomPosition_[inferInfo_.localInputMapping_[i] * DIM + 1]);
+        mappedAtomPos.push_back(inferInfo_.atomPosition_[inferInfo_.localInputMapping_[i] * DIM + 2]);
+    }
+
+    build_inputnlist(inferInfo_.inputNlist_, mappedAtomPos, localAtomNum, 0.7 / c_dp2gmx);
+    dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_,
+                        mappedAtomPos, mappedAtomNum, inferInfo_.box_,
+                        N-localAtomNum, inferInfo_.inputNlist_, 0);
 
     free_inputnlist(inferInfo_.inputNlist_);
 
-    // dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_, inferInfo_.atomEnergy_, inferInfo_.atomVirial_,
-    //         inferInfo_.atomPosition_, inferInfo_.atomType_ , inferInfo_.box_);
 #else
     if (MAIN(cr_)){
         dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_, inferInfo_.atomEnergy_, inferInfo_.atomVirial_,
-            inferInfo_.atomPosition_, inferInfo_.atomType_ , inferInfo_.box_);   
+            inferInfo_.atomPosition_, inferInfo_.atomType_, inferInfo_.box_);   
     }
     else{
         inferInfo_.energy_= 0.0;
@@ -213,6 +241,7 @@ void DeepmdModel::evaluateModel()
         inferInfo_.atomEnergy_.assign(N,0.0);
     }
 #endif
+
     outputReady_ = true;
 }
 
@@ -227,38 +256,21 @@ void DeepmdModel::getOutputs(std::vector<int>& indices, gmx_enerdata_t& enerd, c
         GMX_THROW(InternalError("Model outputs not ready before getOutputs() was called."));
     }
 
-    const int N = indices.size(); // local + ghost
-    const int Nlocal = this->localAtomNum;
+    const int N = indices.size(); // global NN atom num
 
 #if GMX_DEEPMD_INFERENCE_MULTI_MPI
 
     enerd.term[F_ENNPOT] = inferInfo_.energy_ * e_dp2gmx * lambda;
 
-    inferInfo_.ghostForceAggregation_.assign(3 * this->wholeSystemAtomNum, 0.0);
+    auto mappedForces = inferInfo_.atomForce_;
 
-    for (int i = Nlocal; i < N; ++i)
+    for(int i = 0; i < N; ++i)
     {
-        const auto& idx = this->idxLookupGlobalPtr_->at(i);
-
-        inferInfo_.ghostForceAggregation_[idx * DIM]     = inferInfo_.atomForce_[i * DIM];
-        inferInfo_.ghostForceAggregation_[idx * DIM + 1] = inferInfo_.atomForce_[i * DIM + 1];
-        inferInfo_.ghostForceAggregation_[idx * DIM + 2] = inferInfo_.atomForce_[i * DIM + 2];
+        inferInfo_.atomForce_[inferInfo_.localInputMapping_[i] * DIM + 0] = mappedForces[i * DIM + 0];
+        inferInfo_.atomForce_[inferInfo_.localInputMapping_[i] * DIM + 1] = mappedForces[i * DIM + 1];
+        inferInfo_.atomForce_[inferInfo_.localInputMapping_[i] * DIM + 2] = mappedForces[i * DIM + 2];
     }
 
-    if (havePPDomainDecomposition(cr_))
-    {
-        gmx_sum(inferInfo_.ghostForceAggregation_.size(), static_cast<real*>(inferInfo_.ghostForceAggregation_.data()), cr_);
-    }
-
-
-    for (int i = 0; i < Nlocal; ++i){
-        const auto& idxLocal = indices[i];
-        const auto& idxGlobal = this->idxLookupGlobalPtr_->at(i);
-
-        forces[idxLocal][0] += ((inferInfo_.atomForce_[i * DIM] + inferInfo_.ghostForceAggregation_[idxGlobal * DIM]) * f_dp2gmx * lambda);
-        forces[idxLocal][1] += ((inferInfo_.atomForce_[i * DIM + 1] + inferInfo_.ghostForceAggregation_[idxGlobal * DIM + 1]) * f_dp2gmx * lambda);
-        forces[idxLocal][2] += ((inferInfo_.atomForce_[i * DIM + 2] + inferInfo_.ghostForceAggregation_[idxGlobal * DIM + 2]) * f_dp2gmx * lambda);
-    }
 #else
     const bool modelOutputsForces = outputsForces();
     if (MAIN(cr_))
@@ -271,6 +283,7 @@ void DeepmdModel::getOutputs(std::vector<int>& indices, gmx_enerdata_t& enerd, c
             GMX_THROW(InternalError("Model does not output forces, but getOutputs() was called."));
         }
     }
+#endif
 
     // distribute forces
     if (havePPDomainDecomposition(cr_))
@@ -278,21 +291,17 @@ void DeepmdModel::getOutputs(std::vector<int>& indices, gmx_enerdata_t& enerd, c
         gmx_sum(3 * N, static_cast<real*>(inferInfo_.atomForce_.data()), cr_);
     }
 
-    // accumulate forces only on local atoms
-    for (int m = 0; m < DIM; ++m)
-    {
-        for (int i = 0; i < N; ++i)
-        {
-            // if value in lookup table is -1, the atom is not local
-            if (indices[i] == -1)
-            {
-                continue;
-            }
-            forces[indices[i]][m] += inferInfo_.atomForce_[i * DIM + m] * f_dp2gmx * lambda; // convert to gromacs unit
-        }
-    }
 
-#endif
+    for (int i = 0; i < N; ++i)
+    {
+        if (indices[i] == -1) continue;
+
+        forces[indices[i]][0] += inferInfo_.atomForce_[i * DIM + 0] * f_dp2gmx * lambda;
+        forces[indices[i]][1] += inferInfo_.atomForce_[i * DIM + 1] * f_dp2gmx * lambda;
+        forces[indices[i]][2] += inferInfo_.atomForce_[i * DIM + 2] * f_dp2gmx * lambda;
+    }
+    
+
     outputReady_ = false;
 }
 
