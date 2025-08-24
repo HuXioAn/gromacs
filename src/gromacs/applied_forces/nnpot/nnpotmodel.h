@@ -80,7 +80,7 @@ public:
     virtual void preparePbcType(PbcType&)                 = 0;
     //! \}
 
-    virtual void createNeighbList(const NNPotParameters& params) = 0;
+    virtual void preProcessData(const NNPotParameters& params, std::vector<int>&) = 0;
 
     //! call inference on NN model
     virtual void evaluateModel() = 0;

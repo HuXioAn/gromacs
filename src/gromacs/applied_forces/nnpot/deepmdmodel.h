@@ -22,14 +22,22 @@ struct deepmdInferenceInfo {
 
     int localNNAtomNum;
     int ghostNNAtomNum;
+    int totalLocalGhostNNAtomNum;
+    int totalNNAtomNum;
 
     MPI_Comm comm = MPI_COMM_NULL;
 
     /* input */
     std::vector<real> atomPosition_;
+    std::vector<real> atomPositionCollective_;
 
     // the atom types, in for the model 
     std::vector<int> atomType_;
+    std::vector<int> atomTypeCollective_;
+
+    // local and global indexes
+    std::vector<int> localIdxes_;
+    std::vector<int> globalIdxes_;
 
     bool pbcType_;
 
@@ -146,7 +154,7 @@ public:
 
     void evaluateModel() override;
     
-    void createNeighbList(const NNPotParameters& params) override;
+    void preProcessData(const NNPotParameters& params, std::vector<int>&) override;
 
     void getOutputs(std::vector<int>& indices, gmx_enerdata_t& enerd, const ArrayRef<RVec>& forces) override {}
 
