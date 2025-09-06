@@ -41,6 +41,9 @@ struct deepmdInferenceInfo {
 
     bool pbcType_;
 
+    int step=0;
+    int keepNList=0;
+
     std::vector<real> box_ = std::vector<real>(DIM*DIM, 0.0);
 
     // neighboring list

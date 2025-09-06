@@ -9,6 +9,8 @@
 #include <unordered_set>
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
+#include <utility>   // std::pair
 
 //#include "gromacs/domdec/domdec_struct.h"
 //#include "gromacs/domdec/haloexchange.h"
@@ -23,13 +25,17 @@
 
 #include "deepmdmodel.h"
 
+#define GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_BUILD_LIST 0
+#define GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_REBUILD_DD 1
+
 #define STR_HELPER(x) #x
 #define STR(x) STR_HELPER(x)
 #pragma message("GMX_DEEPMD_INFERENCE_MULTI_MPI = " STR(GMX_DEEPMD_INFERENCE_MULTI_MPI))
 #pragma message("GMX_DEEPMD_INFERENCE_MULTI_MPI_GHOST = " STR(GMX_DEEPMD_INFERENCE_MULTI_MPI_GHOST))
 #pragma message("GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE = " STR(GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE))
+#pragma message("GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_BUILD_LIST = " STR(GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_BUILD_LIST))
 
-#define GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_BUILD_LIST 0
+
 
 namespace gmx
 {
@@ -134,14 +140,15 @@ static inline real euclideanDistanceSqrd(const std::array<real,3> ri, const std:
 // Returns true if j's minimum-image relative to i uses a nonzero shift AND is within rcut.
 // If true, out_shifted = coordinates of the image of j that should be duplicated,
 // and out_n = integer shift vector (nx, ny, nz).
-static inline bool min_image_duplicate_if_needed(
+static inline real min_image_duplicate_if_needed(
     const std::array<real,3>& ri,     // atom i position
     const std::array<real,3>& rj,     // atom j position (base cell)
     const std::vector<real>& box,
     const real rcutSqrd,
     bool& inCutOffDistance,
+    bool& need_dup,
     std::array<real,3>& out_shifted, // shifted coords for duplicate (if any)
-    std::array<int,3>& out_n)  
+    std::array<size_t,3>& out_n)  
 {
     // Raw displacement
     real dx = rj[0] - ri[0];
@@ -161,12 +168,12 @@ static inline bool min_image_duplicate_if_needed(
     const real d2   = dx*dx + dy*dy + dz*dz;
     inCutOffDistance = (d2 <= rcutSqrd);
 
-    const bool need_dup = inCutOffDistance && (nx != 0 || ny != 0 || nz != 0);
+    need_dup = inCutOffDistance && (nx != 0 || ny != 0 || nz != 0);
     // Coordinates of the image that realizes the minimum image
     out_shifted = { rj[0] - nx*box[0], rj[1] - ny*box[DIM + 1], rj[2] - nz*box[2 * DIM + 2] };
     out_n   = { nx, ny, nz };
         
-    return need_dup;
+    return d2;
 }
 
 
@@ -196,13 +203,208 @@ struct ImgKeyHash {
     }
 };
 
-using ImgSet = std::unordered_set<ImgKey, ImgKeyHash>;
+//using ImgSet = std::unordered_set<ImgKey, ImgKeyHash>;
+//static inline bool add_atom_if_new(ImgSet& imgSet, int j, int nx, int ny, int nz) {
 
-static inline bool add_atom_if_new(ImgSet& imgSet, int j, int nx, int ny, int nz) {
-    ImgKey key{j, nx, ny, nz};
-    auto [it, inserted] = imgSet.insert(key);
+class ImgIndex {
+public:
+    explicit ImgIndex(std::size_t expected = 0) {
+        order_.reserve(expected);
+        index_.reserve(expected);
+    }
+
+    // Add if new; always returns the index and whether it was inserted now.
+    // Result: {index, inserted}
+    std::pair<std::size_t, bool> add_or_get(int j, int nx, int ny, int nz) {
+        ImgKey key{j, nx, ny, nz};
+        auto it = index_.find(key);
+        if (it != index_.end())
+            return {it->second, false};  // already present → give index
+
+        const std::size_t idx = order_.size();
+        order_.push_back(key);           // keep insertion order
+        index_.emplace(key, idx);
+        return {idx, true};              // new element → appended at end
+    }
+
+    // Optional helpers
+    std::size_t size() const noexcept { return order_.size(); }
+    const ImgKey& at(std::size_t i) const { return order_[i]; }
+    const std::vector<ImgKey>& order() const noexcept { return order_; }
+
+    // Iterate in insertion order:
+    auto begin() const { return order_.begin(); }
+    auto end()   const { return order_.end(); }
+
+private:
+    std::vector<ImgKey> order_;                                   // insertion order
+    std::unordered_map<ImgKey, std::size_t, ImgKeyHash> index_;   // key → index
+};
+
+static inline bool add_atom_if_new(ImgIndex& imgSet, int j, int nx, int ny, int nz, size_t* out_idx=nullptr) {
+    auto [idx, inserted] = imgSet.add_or_get(j, nx, ny, nz);
+    if (out_idx) *out_idx = int(idx);
     return inserted;               // true  -> wasn't there (now added)
                                    // false -> already present
+}
+
+
+
+static inline void build_DD(const int numRanks, int& nx, int& ny, int& nz) {
+    if (numRanks <= 0) { nx = ny = nz = 0; return; }
+
+    // Start with the trivial decomposition.
+    int bestx = numRanks, besty = 1, bestz = 1;
+
+    auto ratio = [](int a, int b, int c){
+        int mn = std::min({a,b,c});
+        int mx = std::max({a,b,c});
+        return static_cast<double>(mx) / static_cast<double>(mn);
+    };
+    auto surface = [](int a, int b, int c){
+        // surface area proxy for comm volume: ab + ac + bc
+        return 1LL*a*b + 1LL*a*c + 1LL*b*c;
+    };
+
+    double best_ratio = ratio(bestx, besty, bestz);
+    long long best_surface = surface(bestx, besty, bestz);
+
+    const int cbrtN = static_cast<int>(std::cbrt(static_cast<double>(numRanks)));
+
+    for (int i = 1; i <= cbrtN; ++i) {
+        if (numRanks % i) continue;
+        const int n1 = numRanks / i;
+        const int sqrtN1 = static_cast<int>(std::sqrt(static_cast<double>(n1)));
+
+        for (int j = 1; j <= sqrtN1; ++j) {
+            if (n1 % j) continue;
+            const int k = n1 / j;
+
+            int a = i, b = j, c = k;
+            // sort so a <= b <= c to compare fairly
+            if (a > b) std::swap(a, b);
+            if (b > c) std::swap(b, c);
+            if (a > b) std::swap(a, b);
+
+            const double r = static_cast<double>(c) / static_cast<double>(a);
+            const long long s = 1LL*a*b + 1LL*a*c + 1LL*b*c;
+
+            if (r < best_ratio || (r == best_ratio && s < best_surface)) {
+                best_ratio = r;
+                best_surface = s;
+                // return in descending order (x >= y >= z) for consistency
+                nx = c; ny = b; nz = a;
+            }
+        }
+    }
+}
+
+// Linear rank → (ix,iy,iz). Use MPI_Cart_coords if you already have a Cart grid.
+static inline void rank_to_ijk(const int rank, const int nDDx, const int nDDy, const int nDDz,
+                               int& ix, int& iy, int& iz)
+{
+    ix =  rank % nDDx;
+    iy = (rank / nDDx) % nDDy;
+    iz =  rank / (nDDx * nDDy);
+}
+
+static inline bool select_atom_pbc(const real atom_pos, const real lo, const real hi, const real Lbox, const real halo,
+                                     real& atom_pos_shifted, bool& local) {
+    const real width = hi - lo;                   // subdomain width
+    const real haloLow = lo - halo;
+    const real haloHigh = hi + halo;
+
+    if (width <= real(0)) return false;
+    
+    // select local atoms
+    if (atom_pos >= lo && atom_pos < hi ){
+        atom_pos_shifted = atom_pos;
+        local = true;
+        return true;
+    }
+
+    // left ghost atoms
+    if ( haloLow >= 0 ) { atom_pos_shifted = atom_pos; }
+    else{ atom_pos_shifted = atom_pos - Lbox; }
+    if (atom_pos_shifted >= haloLow && atom_pos_shifted < lo ){
+        local = false;
+        return true;
+    }
+
+    // right ghost atoms
+    if (haloHigh < Lbox){ atom_pos_shifted = atom_pos; }
+    else{ atom_pos_shifted = atom_pos + Lbox; }
+    if (atom_pos_shifted >= hi && atom_pos_shifted < haloHigh ){
+        local = false;
+        return true;
+    }
+
+    return false;
+}
+
+// Extract local+halo atoms with PBC and *shifted local coordinates*.
+// Output layout matches input: [x0,y0,z0, x1,y1,z1, ...], but now positions
+// live in [-halo, width+halo) per axis (i.e., subdomain-local frame).
+static inline void extract_atoms_local_with_halo_shifted(
+    const std::vector<int>& atomTypeGlobal,   // [x0,y0,z0, x1,y1,z1, ...], global coords
+    const std::vector<real>& atomPosGlobal,   // [x0,y0,z0, x1,y1,z1, ...], global coords
+    const size_t Ntot,
+    std::vector<real>&       atomPositionCollective,    // output (local coords, same layout)
+    std::vector<int>&       atomTypeCollective,    // output (local coords, same layout)
+    std::vector<int>&       atomIdxLocal,    // output (local coords, same layout)
+    std::vector<int>&       atomIdxGlobal,
+    int& countLocal,   
+    const real Lx, const real Ly, const real Lz,
+    const real rHalo,
+    const int nDDx, const int nDDy, const int nDDz,
+    const int rank)
+{
+    countLocal=0;
+    // Which subdomain am I?
+    int ix, iy, iz;
+    rank_to_ijk(rank, nDDx, nDDy, nDDz, ix, iy, iz);
+
+    // Subdomain extents (half-open). Clamp last slabs to L* to avoid FP gaps.
+    const real dx = Lx / real(nDDx);
+    const real dy = Ly / real(nDDy);
+    const real dz = Lz / real(nDDz);
+
+    const real xlo = dx * real(ix);
+    const real xhi = (ix == nDDx-1) ? Lx : dx * real(ix + 1);
+
+    const real ylo = dy * real(iy);
+    const real yhi = (iy == nDDy-1) ? Ly : dy * real(iy + 1);
+
+    const real zlo = dz * real(iz);
+    const real zhi = (iz == nDDz-1) ? Lz : dz * real(iz + 1);
+
+    for (std::size_t i = 0; i < Ntot; ++i) {
+        // Wrap globals into [0,L) first
+        const real xOrig = atomPosGlobal[DIM*i + 0];
+        const real yOrig = atomPosGlobal[DIM*i + 1];
+        const real zOrig = atomPosGlobal[DIM*i + 2];
+        real xShifted, yShifted, zShifted; // local coords relative to (xlo,ylo,zlo)
+        bool local;
+        const bool inx = select_atom_pbc(xOrig, xlo, xhi, Lx, rHalo, xShifted, local);
+        if (!inx) continue;
+        const bool iny = select_atom_pbc(yOrig, ylo, yhi, Ly, rHalo, yShifted, local);
+        if (!iny) continue;
+        const bool inz = select_atom_pbc(zOrig, zlo, zhi, Lz, rHalo, zShifted, local);
+        if (!inz) continue;
+
+        atomPositionCollective.push_back(xShifted);
+        atomPositionCollective.push_back(yShifted);
+        atomPositionCollective.push_back(zShifted);
+        atomTypeCollective.push_back(atomTypeGlobal[i]);
+        atomIdxGlobal.push_back(i);
+        if (local){
+            atomIdxLocal.push_back(atomIdxGlobal.back());
+            countLocal++;
+        }
+        else{
+            atomIdxLocal.push_back(-1);
+        }
+    }
 }
 
 void  DeepmdModel::preProcessData(const NNPotParameters& params, std::vector<int>& idxLookup)
@@ -240,6 +442,18 @@ void  DeepmdModel::preProcessData(const NNPotParameters& params, std::vector<int
     }
 
 #elif GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE
+    
+    constexpr real ghostCutOff = 6.5; // in Angstrom
+    constexpr real rCutoff = 6.2;
+    constexpr real twiceRCutoffSqrd = (real)4.0 * ghostCutOff * ghostCutOff;    
+ 
+
+    
+    //std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE Create Ghost- Rank " << this->cr_->rankInDefaultCommunicator << 
+    //" inferInfo_.totalLocalGhostNNAtomNum=" << inferInfo_.totalLocalGhostNNAtomNum << " inferInfo_.ghostNNAtomNum="<< inferInfo_.ghostNNAtomNum << std::endl;
+
+#if GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_BUILD_LIST
+
 
     inferInfo_.localNNAtomNum = params.inpAtoms_->numAtomsLocal();
     //reserve three times the memory required by local atoms
@@ -261,19 +475,250 @@ void  DeepmdModel::preProcessData(const NNPotParameters& params, std::vector<int
             inferInfo_.atomPositionCollective_.push_back(inferInfo_.atomPosition_[i * DIM + 2]);
         }
     }
+    // add ghost and duplicated atoms to implement periodic bcs loop over local + non local atoms
+    //ImgSet imgSet;
+    //imgSet.reserve(4096);   // optional: avoid rehash during the loop
+    ImgIndex imgSet(inferInfo_.localNNAtomNum);
+    std::array<real,DIM> out_shifted;
+    std::array<size_t,DIM> out_n;
+
+    auto time0 = std::chrono::high_resolution_clock::now();
+    constexpr int initialListSize = 1024;
+    std::vector<std::vector<size_t>> localGhostNlist(3 * inferInfo_.localNNAtomNum);
+    for (auto& vec : localGhostNlist) {
+        vec.reserve(initialListSize);
+    }
+    size_t lastIdx = inferInfo_.localNNAtomNum - 1; 
+    for (size_t i = 0; i < inferInfo_.localNNAtomNum; i++){
+        //lIdx = params.inpAtoms_->localIndex()[i];
+        const int lIdx = inferInfo_.localIdxes_[i];
+        const std::array<real,DIM> ri = {inferInfo_.atomPositionCollective_[i * DIM],
+                                    inferInfo_.atomPositionCollective_[i * DIM + 1],
+                                    inferInfo_.atomPositionCollective_[i * DIM + 2]};
+
+        for (size_t j = i+1; j < inferInfo_.localNNAtomNum; ++j){
+        
+            const std::array<real,DIM> rj = {inferInfo_.atomPositionCollective_[j * DIM],
+                                        inferInfo_.atomPositionCollective_[j * DIM + 1],
+                                        inferInfo_.atomPositionCollective_[j * DIM + 2]};
+            
+            bool inTwiceCutOffDistance = false;
+            bool duplicate = false;
+            const real dist2 = min_image_duplicate_if_needed(ri, rj, inferInfo_.box_, twiceRCutoffSqrd, inTwiceCutOffDistance, duplicate, out_shifted, out_n);
+            
+            if (inTwiceCutOffDistance){
+                if (duplicate){
+                    size_t imageAtomIdxJ = -1;
+                    size_t imageAtomIdxI = -1;
+                    if ( add_atom_if_new(imgSet, (int)inferInfo_.globalIdxes_[j], out_n[0], out_n[1], out_n[2], &imageAtomIdxJ) ) {
+                        inferInfo_.globalIdxes_.push_back(inferInfo_.globalIdxes_[j]);
+                        inferInfo_.atomTypeCollective_.push_back(inferInfo_.atomTypeCollective_[j]);
+                        inferInfo_.atomPositionCollective_.push_back(out_shifted[0]);
+                        inferInfo_.atomPositionCollective_.push_back(out_shifted[1]);
+                        inferInfo_.atomPositionCollective_.push_back(out_shifted[2]);
+                        lastIdx++;
+                    }
+                    if ( add_atom_if_new(imgSet, (int)inferInfo_.globalIdxes_[i], -out_n[0], -out_n[1], -out_n[2], &imageAtomIdxI) ) {
+                        inferInfo_.globalIdxes_.push_back(inferInfo_.globalIdxes_[i]);
+                        inferInfo_.atomTypeCollective_.push_back(inferInfo_.atomTypeCollective_[i]);
+                        inferInfo_.atomPositionCollective_.push_back(ri[0] + out_n[0]*inferInfo_.box_[0]);
+                        inferInfo_.atomPositionCollective_.push_back(ri[1] + out_n[1]*inferInfo_.box_[DIM + 1]);
+                        inferInfo_.atomPositionCollective_.push_back(ri[2] + out_n[2]*inferInfo_.box_[2*DIM + 2]);
+                        lastIdx++;
+                    }
+                    if (dist2 < rCutoff*rCutoff){
+                        localGhostNlist[i].push_back(inferInfo_.localNNAtomNum + imageAtomIdxJ);
+                        localGhostNlist[j].push_back(inferInfo_.localNNAtomNum + imageAtomIdxI);
+                        localGhostNlist[inferInfo_.localNNAtomNum + imageAtomIdxJ].push_back(i);
+                        localGhostNlist[inferInfo_.localNNAtomNum + imageAtomIdxI].push_back(j);
+                    }
+                }
+                else{
+                    if (dist2 < rCutoff*rCutoff){
+                        localGhostNlist[i].push_back(j);
+                        localGhostNlist[j].push_back(i);
+                    }
+                }
+            }
+        }
+    }
+    for (size_t i = 0; i < inferInfo_.localNNAtomNum; i++){
+        //lIdx = params.inpAtoms_->localIndex()[i];
+        const int lIdx = inferInfo_.localIdxes_[i];
+        const std::array<real,DIM> ri = {inferInfo_.atomPositionCollective_[i * DIM],
+                                    inferInfo_.atomPositionCollective_[i * DIM + 1],
+                                    inferInfo_.atomPositionCollective_[i * DIM + 2]};
+
+        for (size_t j = 0; j < inferInfo_.totalNNAtomNum; ++j){
+            if (idxLookup[j] == -1)
+            {
+                const std::array<real,DIM> rj = {inferInfo_.atomPosition_[j * DIM],
+                                            inferInfo_.atomPosition_[j * DIM + 1],
+                                            inferInfo_.atomPosition_[j * DIM + 2]};
+                
+                bool inTwiceCutOffDistance = false;
+                bool shift = false;
+                const real dist2 = min_image_duplicate_if_needed(ri, rj, inferInfo_.box_, twiceRCutoffSqrd, inTwiceCutOffDistance, shift, out_shifted, out_n);
+                
+                if (inTwiceCutOffDistance){
+                    size_t imageAtomIdxJ = -1;
+                    if ( add_atom_if_new(imgSet, (int)j, out_n[0], out_n[1], out_n[2], &imageAtomIdxJ) ) {
+                        inferInfo_.globalIdxes_.push_back(j);
+                        inferInfo_.atomTypeCollective_.push_back(inferInfo_.atomType_[j]);
+                        inferInfo_.atomPositionCollective_.push_back(out_shifted[0]);
+                        inferInfo_.atomPositionCollective_.push_back(out_shifted[1]);
+                        inferInfo_.atomPositionCollective_.push_back(out_shifted[2]);
+                        lastIdx++;
+                    }
+                    if (dist2 < rCutoff*rCutoff){
+                        localGhostNlist[i].push_back(inferInfo_.localNNAtomNum + imageAtomIdxJ);
+                        localGhostNlist[inferInfo_.localNNAtomNum + imageAtomIdxJ].push_back(i);
+                    }
+                }
+            }
+        }
+    }
+    inferInfo_.totalLocalGhostNNAtomNum = inferInfo_.atomTypeCollective_.size();
+    inferInfo_.ghostNNAtomNum = inferInfo_.atomTypeCollective_.size() - inferInfo_.localNNAtomNum;
+
+    for (size_t i = inferInfo_.localNNAtomNum; i < inferInfo_.totalLocalGhostNNAtomNum; i++){
+        //lIdx = params.inpAtoms_->localIndex()[i];
+        const int lIdx = inferInfo_.localIdxes_[i];
+        const std::array<real,DIM> ri = {inferInfo_.atomPositionCollective_[i * DIM],
+                                    inferInfo_.atomPositionCollective_[i * DIM + 1],
+                                    inferInfo_.atomPositionCollective_[i * DIM + 2]};
+
+        for (size_t j = i+1; j < inferInfo_.totalLocalGhostNNAtomNum; ++j){
+        
+            const std::array<real,DIM> rj = {inferInfo_.atomPositionCollective_[j * DIM],
+                                        inferInfo_.atomPositionCollective_[j * DIM + 1],
+                                        inferInfo_.atomPositionCollective_[j * DIM + 2]};
+            const real dist2 = euclideanDistanceSqrd(ri, rj);
+            
+            if (dist2 < rCutoff*rCutoff){
+                localGhostNlist[i].push_back(j);
+                localGhostNlist[j].push_back(i);
+            }
+        }
+    }
+    auto time1 = std::chrono::high_resolution_clock::now();
+    
+    std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE Create Local- Rank " << this->cr_->rankInDefaultCommunicator << 
+    " inferInfo_.atomTypeCollective_size()=" << inferInfo_.atomTypeCollective_.size() << 
+    " inferInfo_.localNNAtomNum="<< inferInfo_.localNNAtomNum <<
+    " inferInfo_.ghostNNAtomNum="<< inferInfo_.ghostNNAtomNum <<
+    " idxLookup.size()=" << idxLookup.size() << std::endl;
+
+    inferInfo_.resizeNeighborList(inferInfo_.totalLocalGhostNNAtomNum,int(initialListSize));
+    //inferInfo_.neighList.world     = reinterpret_cast<void*>(&cr_->mpiDefaultCommunicator);
+    inferInfo_.comm = MPI_COMM_SELF;
+    inferInfo_.neighList.world     = reinterpret_cast<void*>(&inferInfo_.comm);
+    inferInfo_.neighList.nswap     = 0;
+    inferInfo_.neighList.sendnum   = nullptr;
+    inferInfo_.neighList.recvnum   = nullptr;
+    inferInfo_.neighList.firstrecv = nullptr;
+    inferInfo_.neighList.sendlist  = nullptr;
+    inferInfo_.neighList.sendproc  = nullptr;
+    inferInfo_.neighList.recvproc  = nullptr;
+    inferInfo_.rcutoff = rCutoff; // in Angstrom
+    
+    inferInfo_.neighList.inum = inferInfo_.totalLocalGhostNNAtomNum;
+    inferInfo_.maxlistSize_ = 0;
+    for (size_t ii = 0; ii < inferInfo_.totalLocalGhostNNAtomNum; ++ii) {
+        inferInfo_.neighList.ilist[ii] = ii;
+        inferInfo_.neighList.numneigh[ii] = localGhostNlist[ii].size();
+        if ( inferInfo_.maxlistSize_ <  inferInfo_.neighList.numneigh[ii] ) {inferInfo_.maxlistSize_ =  inferInfo_.neighList.numneigh[ii]; } 
+        std::copy(localGhostNlist[ii].begin(), localGhostNlist[ii].end(), inferInfo_.neighList.firstneigh[ii]);
+    }
+    if (inferInfo_.maxlistSize_ > initialListSize) {
+        std::ostringstream msg;
+        msg << "DeepMD neighbor‐list overflow: "
+            << "required per‐atom capacity = " << inferInfo_.maxlistSize_
+            << ", but allocated maxNeighPerAtom = " << inferInfo_.maxNeighPerAtom_
+            << ". Please increase mem_size and retry.";
+        // Option A: print and exit
+        std::cerr << msg.str() << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+    auto time2 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> duration1 = time1 - time0;
+    std::chrono::duration<double> duration2 = time2 - time1;
+    std::chrono::duration<double> duration3 = time2 - time0;
+    std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE preorcess - Rank " << this->cr_->rankInDefaultCommunicator <<
+    " time create nlist " << (duration1.count())*1000 << " millis" << 
+    " time copy into inputList  " <<(duration2.count())*1000 << " millis" <<
+    " time tot  " <<(duration3.count())*1000 << " millis" <<std::endl;
+
+#else
+
+#if GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_REBUILD_DD
+
+    const int numSubDomains = this->cr_->sizeOfDefaultCommunicator;
+    const int myRank = this->cr_->rankInDefaultCommunicator;
+    const int avgLocalNNAtom = inferInfo_.totalNNAtomNum / numSubDomains ;
+
+    const real boxLx = inferInfo_.box_[0];
+    const real boxLy = inferInfo_.box_[DIM + 1];
+    const real boxLz = inferInfo_.box_[2*DIM + 2];
+
+    int nDDx, nDDy, nDDz;
+    build_DD(numSubDomains,nDDx,nDDy,nDDz);
+    
+    //reserve three times the memory required by local atoms
+    inferInfo_.localIdxes_.clear();
+    inferInfo_.globalIdxes_.clear();
+    inferInfo_.atomTypeCollective_.clear();
+    inferInfo_.atomPositionCollective_.clear();
+    inferInfo_.localIdxes_.reserve(3 * avgLocalNNAtom);
+    inferInfo_.globalIdxes_.reserve(3 * avgLocalNNAtom);
+    inferInfo_.atomTypeCollective_.reserve(3 * avgLocalNNAtom);
+    inferInfo_.atomPositionCollective_.reserve(9 * avgLocalNNAtom);
+
+    int countLocal = 0;
+    extract_atoms_local_with_halo_shifted(inferInfo_.atomType_, inferInfo_.atomPosition_, inferInfo_.totalNNAtomNum, 
+                                        inferInfo_.atomPositionCollective_, inferInfo_.atomTypeCollective_,
+                                        inferInfo_.localIdxes_, inferInfo_.globalIdxes_, 
+                                        boxLx, boxLy, boxLz, 2*ghostCutOff, 
+                                        nDDx, nDDy, nDDz, myRank);
+    
+    inferInfo_.totalLocalGhostNNAtomNum = inferInfo_.atomTypeCollective_.size();
+    inferInfo_.localNNAtomNum = countLocal;
+    inferInfo_.ghostNNAtomNum = inferInfo_.atomTypeCollective_.size() - inferInfo_.localNNAtomNum;
 
     std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE Create Local- Rank " << this->cr_->rankInDefaultCommunicator << 
-    " inferInfo_.atomTypeCollective_size()=" << inferInfo_.atomTypeCollective_.size() << " inferInfo_.localNNAtomNum="<< inferInfo_.localNNAtomNum <<
+    " inferInfo_.atomTypeCollective_size()=" << inferInfo_.atomTypeCollective_.size() << 
+    " inferInfo_.localNNAtomNum="<< inferInfo_.localNNAtomNum <<
+    " inferInfo_.ghostNNAtomNum="<< inferInfo_.ghostNNAtomNum <<
     " idxLookup.size()=" << idxLookup.size() << std::endl;
-    
-    const real ghostCutOff = 7.0; // in Angstrom
-    const real twiceRCutoffSqrd = (real)4.0 * ghostCutOff * ghostCutOff;    
- 
+
+#else
+
+    inferInfo_.localNNAtomNum = params.inpAtoms_->numAtomsLocal();
+    //reserve three times the memory required by local atoms
+    inferInfo_.localIdxes_.clear();
+    inferInfo_.atomTypeCollective_.clear();
+    inferInfo_.atomPositionCollective_.clear();
+    inferInfo_.localIdxes_.reserve(3 * inferInfo_.localNNAtomNum);
+    inferInfo_.globalIdxes_.reserve(3 * inferInfo_.localNNAtomNum);
+    inferInfo_.atomTypeCollective_.reserve(3 * inferInfo_.localNNAtomNum);
+    inferInfo_.atomPositionCollective_.reserve(9 * inferInfo_.localNNAtomNum);
+
+    for (size_t i = 0; i < inferInfo_.totalNNAtomNum; i++){
+        if (idxLookup[i] != -1){
+            inferInfo_.globalIdxes_.push_back(i);
+            inferInfo_.localIdxes_.push_back(idxLookup[i]);
+            inferInfo_.atomTypeCollective_.push_back(inferInfo_.atomType_[i]);
+            inferInfo_.atomPositionCollective_.push_back(inferInfo_.atomPosition_[i * DIM]);
+            inferInfo_.atomPositionCollective_.push_back(inferInfo_.atomPosition_[i * DIM + 1]);
+            inferInfo_.atomPositionCollective_.push_back(inferInfo_.atomPosition_[i * DIM + 2]);
+        }
+    }
     // add ghost and duplicated atoms to implement periodic bcs loop over local + non local atoms
-    ImgSet imgSet;
-    imgSet.reserve(4096);   // optional: avoid rehash during the loop
+    //ImgSet imgSet;
+    //imgSet.reserve(4096);   // optional: avoid rehash during the loop
+    ImgIndex imgSet(inferInfo_.localNNAtomNum);
     std::array<real,DIM> out_shifted;
-    std::array<int,DIM> out_n;
+    std::array<size_t,DIM> out_n;
     for (size_t i = 0; i < inferInfo_.localNNAtomNum; i++){
         //lIdx = params.inpAtoms_->localIndex()[i];
         const int lIdx = inferInfo_.localIdxes_[i];
@@ -288,10 +733,12 @@ void  DeepmdModel::preProcessData(const NNPotParameters& params, std::vector<int
                                             inferInfo_.atomPosition_[j * DIM + 1],
                                             inferInfo_.atomPosition_[j * DIM + 2]};
                 
-                bool inCutOffDistance = false;
-                const bool duplicate = min_image_duplicate_if_needed(ri, rj, inferInfo_.box_, twiceRCutoffSqrd, inCutOffDistance, out_shifted, out_n);
+                bool inTwiceCutOffDistance = false;
+                bool duplicate = false;
+                const real dist2 = min_image_duplicate_if_needed(ri, rj, inferInfo_.box_, twiceRCutoffSqrd, 
+                                    inTwiceCutOffDistance, duplicate, out_shifted, out_n);
                 
-                if (inCutOffDistance){
+                if (inTwiceCutOffDistance){
                     if (idxLookup[j] == -1 || duplicate){
                         if ( add_atom_if_new(imgSet, (int)j, out_n[0], out_n[1], out_n[2]) ) {
                             inferInfo_.globalIdxes_.push_back(j);
@@ -309,42 +756,16 @@ void  DeepmdModel::preProcessData(const NNPotParameters& params, std::vector<int
     inferInfo_.totalLocalGhostNNAtomNum = inferInfo_.atomTypeCollective_.size();
     inferInfo_.ghostNNAtomNum = inferInfo_.atomTypeCollective_.size() - inferInfo_.localNNAtomNum;
 
-    std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE Create Ghost- Rank " << this->cr_->rankInDefaultCommunicator << 
-    " inferInfo_.totalLocalGhostNNAtomNum=" << inferInfo_.totalLocalGhostNNAtomNum << " inferInfo_.ghostNNAtomNum="<< inferInfo_.ghostNNAtomNum << std::endl;
+    std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE Create Local- Rank " << this->cr_->rankInDefaultCommunicator << 
+    " inferInfo_.atomTypeCollective_size()=" << inferInfo_.atomTypeCollective_.size() << 
+    " inferInfo_.localNNAtomNum="<< inferInfo_.localNNAtomNum <<
+    " inferInfo_.ghostNNAtomNum="<< inferInfo_.ghostNNAtomNum <<
+    " idxLookup.size()=" << idxLookup.size() << std::endl;
 
-#if GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_BUILD_LIST
-    inferInfo_.resizeNeighborList(inferInfo_.localNNAtomNum,int(inferInfo_.localNNAtomNum+inferInfo_.ghostNNAtomNum));
-    //inferInfo_.neighList.world     = reinterpret_cast<void*>(&cr_->mpiDefaultCommunicator);
-    inferInfo_.comm = MPI_COMM_SELF;
-    inferInfo_.neighList.world     = reinterpret_cast<void*>(&inferInfo_.comm);
-    inferInfo_.neighList.nswap     = 0;
-    inferInfo_.neighList.sendnum   = nullptr;
-    inferInfo_.neighList.recvnum   = nullptr;
-    inferInfo_.neighList.firstrecv = nullptr;
-    inferInfo_.neighList.sendlist  = nullptr;
-    inferInfo_.neighList.sendproc  = nullptr;
-    inferInfo_.neighList.recvproc  = nullptr;
-    inferInfo_.rcutoff = 6.5; // in Angstrom
-    int err = deepmd::build_nlist_cpu(inferInfo_.neighList, &inferInfo_.maxlistSize_,
-                            inferInfo_.atomPositionCollective_.data(),
-                            inferInfo_.localNNAtomNum,
-                            inferInfo_.localNNAtomNum + inferInfo_.ghostNNAtomNum,
-                            inferInfo_.maxNeighPerAtom_,
-                            real(inferInfo_.rcutoff) );
-    if (err == 1) {
-        std::ostringstream msg;
-        msg << "DeepMD neighbor‐list overflow: "
-            << "required per‐atom capacity = " << inferInfo_.maxlistSize_
-            << ", but allocated maxNeighPerAtom = " << inferInfo_.maxNeighPerAtom_
-            << ". Please increase mem_size and retry.";
-        // Option A: print and exit
-        std::cerr << msg.str() << std::endl;
-        std::exit(EXIT_FAILURE);
-    }
+
 #endif
 
-
-#else
+#endif
 
 #endif
 
@@ -377,16 +798,39 @@ void DeepmdModel::evaluateModel()
     dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_, inferInfo_.atomEnergy_, inferInfo_.atomVirial_,
             inferInfo_.atomPosition_, inferInfo_.atomType_ , inferInfo_.box_, inferInfo_.ghostNNAtomNum, inferInfo_.neighList, ago);
 
-#elif GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE
+#elif GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE 
 
     inferInfo_.box_.clear();
-    int ago = 0;
+    inferInfo_.step++;
+    inferInfo_.keepNList = inferInfo_.step % 3;
     inferInfo_.atomForce_.clear();
     inferInfo_.atomEnergy_.clear();
     inferInfo_.atomVirial_.clear();
+    std::vector<real> atomForce;
+    std::vector<real> virial;
+    std::vector<real> atomEnergy;
+    std::vector<real> atomVirial;
 #if GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_BUILD_LIST
+    auto time0 = std::chrono::high_resolution_clock::now();
     dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_, inferInfo_.atomEnergy_, inferInfo_.atomVirial_,
-            inferInfo_.atomPositionCollective_, inferInfo_.atomTypeCollective_ , inferInfo_.box_, inferInfo_.ghostNNAtomNum, inferInfo_.neighList, ago);
+            inferInfo_.atomPositionCollective_, inferInfo_.atomTypeCollective_ , inferInfo_.box_, 0, inferInfo_.neighList,  0);
+    auto time1 = std::chrono::high_resolution_clock::now();
+    dp_->compute<real>(inferInfo_.energy_, atomForce, virial, atomEnergy, atomVirial,
+            inferInfo_.atomPositionCollective_, inferInfo_.atomTypeCollective_ , inferInfo_.box_, 0, inferInfo_.neighList, 1);
+    auto time2 = std::chrono::high_resolution_clock::now();
+    dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_, inferInfo_.atomEnergy_, inferInfo_.atomVirial_,
+        inferInfo_.atomPositionCollective_, inferInfo_.atomTypeCollective_ , inferInfo_.box_);
+    auto time3 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> duration1 = time1 - time0;
+    std::chrono::duration<double> duration2 = time2 - time1;
+    std::chrono::duration<double> duration3 = time3 - time2;
+    std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE compute - Rank " << this->cr_->rankInDefaultCommunicator <<
+    "  inferInfo_.step " <<  inferInfo_.step <<
+    " - time compute with inputlist " << (duration1.count())*1000 << " millis" << 
+    " time compute with inputlist no rebuild " << (duration2.count())*1000 << " millis" << 
+    " time compute w/o inputlist " <<(duration3.count())*1000 << " millis" <<std::endl;
+
+
 #else
     dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_, inferInfo_.atomEnergy_, inferInfo_.atomVirial_,
         inferInfo_.atomPositionCollective_, inferInfo_.atomTypeCollective_ , inferInfo_.box_);
@@ -568,6 +1012,50 @@ void DeepmdModel::getOutputs(const NNPotParameters& params, std::vector<int>& in
     
     std::cout<< " In getOutput deepmd: Rank " << this->cr_->rankInDefaultCommunicator << " forces.size() " << forces.size() << " havePPDomainDecomposition(cr_)="<< havePPDomainDecomposition(cr_)<< std::endl;
 #elif GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE
+
+#if GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_REBUILD_DD
+
+    std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE getOutputs - Rank " << this->cr_->rankInDefaultCommunicator << 
+    " inferInfo_.totalNNAtomNum=" << inferInfo_.totalNNAtomNum << " inferInfo_.localNNAtomNum="<< inferInfo_.localNNAtomNum <<
+    " inferInfo_.atomForce_.size()=" << inferInfo_.atomForce_.size()  << std::endl;
+    
+    real localEnergy = 0;
+    for (int i = 0; i < inferInfo_.totalNNAtomNum; ++i)
+    {
+        if(inferInfo_.localIdxes_[i] != -1){
+            localEnergy += inferInfo_.atomEnergy_[i];
+        }
+        else{
+            inferInfo_.atomForce_[DIM * i + 0] = 0.0;
+            inferInfo_.atomForce_[DIM * i + 1] = 0.0;
+            inferInfo_.atomForce_[DIM * i + 2] = 0.0;
+        }
+    }
+    enerd.term[F_ENNPOT] = localEnergy * e_dp2gmx * lambda;
+    if (havePPDomainDecomposition(cr_)){
+        gmx_sum(1, static_cast<real*>(&enerd.term[F_ENNPOT]), cr_);
+    }
+    // distribute forces
+    if (havePPDomainDecomposition(cr_))
+    {
+        gmx_sum(3 * inferInfo_.totalNNAtomNum, static_cast<real*>(inferInfo_.atomForce_.data()), cr_);
+    }
+
+    // accumulate forces only on local atoms
+    for (int m = 0; m < DIM; ++m)
+    {
+        for (int i = 0; i < inferInfo_.totalNNAtomNum; ++i)
+        {
+            // if value in lookup table is -1, the atom is not local
+            if (indices[i] == -1)
+            {
+                continue;
+            }
+            forces[indices[i]][m] += inferInfo_.atomForce_[i * DIM + m] * f_dp2gmx * lambda; // convert to gromacs unit
+        }
+    }
+
+#else
     
     std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE getOutputs - Rank " << this->cr_->rankInDefaultCommunicator << 
     " inferInfo_.totalNNAtomNum=" << inferInfo_.totalNNAtomNum << " inferInfo_.localNNAtomNum="<< inferInfo_.localNNAtomNum <<
@@ -582,14 +1070,16 @@ void DeepmdModel::getOutputs(const NNPotParameters& params, std::vector<int>& in
     if (havePPDomainDecomposition(cr_)){
         gmx_sum(1, static_cast<real*>(&enerd.term[F_ENNPOT]), cr_);
     }
-    writeForces(0,params,indices,forces);
+    //writeForces(0,params,indices,forces);
     // accumulate forces only on local atoms
     for (int i = 0; i < inferInfo_.localNNAtomNum; ++i){
         for (int m = 0; m < DIM; ++m){
             forces[inferInfo_.localIdxes_[i]][m] += inferInfo_.atomForce_[i * DIM + m] * f_dp2gmx * lambda; // convert to gromacs unit
         }
     }
-    writeForces(1,params,indices,forces);
+    //writeForces(1,params,indices,forces);
+
+#endif
 
 #else
     std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI = OFF getOutputs - Rank " << this->cr_->rankInDefaultCommunicator << 
