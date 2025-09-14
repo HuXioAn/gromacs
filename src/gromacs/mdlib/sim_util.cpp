@@ -2231,7 +2231,7 @@ void do_force(FILE*                         fplog,
     {
         // Communication often happens for special forces, so we should close the balancing region here
         ddBalanceRegionHandler.closeAfterForceComputationCpu();
-        std::cout<<"Rank "<<cr->rankInDefaultCommunicator<< " x.unpaddedArrayRef().size()="<<x.unpaddedArrayRef().size() <<std::endl;
+        //std::cout<<"Rank "<<cr->rankInDefaultCommunicator<< " x.unpaddedArrayRef().size()="<<x.unpaddedArrayRef().size() <<std::endl;
         computeSpecialForces(fplog,
                              cr,
                              inputrec,

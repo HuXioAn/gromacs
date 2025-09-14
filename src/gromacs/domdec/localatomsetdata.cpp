@@ -93,7 +93,7 @@ void LocalAtomSetData::setLocalAndCollectiveIndices(const gmx_ga2la_t& ga2la)
             collectiveIndex_.push_back(iCollective);
         }
     }
-    std::cout<< "In LocalAtomSetData::setLocalAndCollectiveIndices globalIndex_.size()="<<globalIndex_.size() << " localIndex_.size()=" <<localIndex_.size() <<std::endl;
+    //std::cout<< "In LocalAtomSetData::setLocalAndCollectiveIndices globalIndex_.size()="<<globalIndex_.size() << " localIndex_.size()=" <<localIndex_.size() <<std::endl;
 }
 
 GhostAtomSetData::GhostAtomSetData(ArrayRef<const Index> globalIndex) : LocalAtomSetData(globalIndex)
@@ -128,7 +128,7 @@ void GhostAtomSetData::setLocalAndCollectiveIndices(const gmx_ga2la_t& ga2la)
             }
         }
     }
-    std::cout<< "In GhostAtomSetData::setLocalAndCollectiveIndices globalIndex_.size()="<<globalIndex_.size()<< " localIndex_.size()=" <<localIndex_.size() <<std::endl;
+    //std::cout<< "In GhostAtomSetData::setLocalAndCollectiveIndices globalIndex_.size()="<<globalIndex_.size()<< " localIndex_.size()=" <<localIndex_.size() <<std::endl;
 }
 
 } // namespace internal
