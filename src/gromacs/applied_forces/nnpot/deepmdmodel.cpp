@@ -566,7 +566,8 @@ void  DeepmdModel::preProcessData(const NNPotParameters& params, std::vector<int
 
     auto time1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> duration1 = time1 - time0;
-
+    
+    /*
     std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE Create rebuild DD Local- Rank " << myRank << 
     "\n numSubDomains " << numSubDomains << " nDDx "<< nDDx << " nDDy "<< nDDy << " nDDz "<< nDDz <<    
     "\n inferInfo_.atomTypeCollective_size()=" << inferInfo_.atomTypeCollective_.size() << 
@@ -574,6 +575,7 @@ void  DeepmdModel::preProcessData(const NNPotParameters& params, std::vector<int
     " inferInfo_.ghostNNAtomNum="<< inferInfo_.ghostNNAtomNum <<
     " - time compute DD " << (duration1.count())*1000 << " millis" <<
     " idxLookup.size()=" << idxLookup.size() << std::endl;
+    */
 
 #else
     // create ghost halos computing pair to pair distances
@@ -640,12 +642,13 @@ void  DeepmdModel::preProcessData(const NNPotParameters& params, std::vector<int
     inferInfo_.totalLocalGhostNNAtomNum = inferInfo_.atomTypeCollective_.size();
     inferInfo_.ghostNNAtomNum = inferInfo_.atomTypeCollective_.size() - inferInfo_.localNNAtomNum;
 
+    /*
     std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE Create Local- Rank " << this->cr_->rankInDefaultCommunicator << 
     " inferInfo_.atomTypeCollective_size()=" << inferInfo_.atomTypeCollective_.size() << 
     " inferInfo_.localNNAtomNum="<< inferInfo_.localNNAtomNum <<
     " inferInfo_.ghostNNAtomNum="<< inferInfo_.ghostNNAtomNum <<
     " idxLookup.size()=" << idxLookup.size() << std::endl;
-
+    */
 
 #endif
 
@@ -687,10 +690,11 @@ void DeepmdModel::evaluateModel()
     }
     auto time1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> duration1 = time1 - time0;
+    /*
     std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE compute - Rank " << this->cr_->rankInDefaultCommunicator <<
     "  inferInfo_.step " <<  inferInfo_.step <<
     " - time compute w/o inputlist " << (duration1.count())*1000 << " millis" << std::endl;
-
+    */
 #else
 
     if (MAIN(cr_)){
@@ -819,10 +823,11 @@ void DeepmdModel::getOutputs(const NNPotParameters& params, std::vector<int>& in
 
 #if GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_REBUILD_DD
 
+    /*
     std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE getOutputs - Rank " << this->cr_->rankInDefaultCommunicator << 
     " inferInfo_.totalNNAtomNum=" << inferInfo_.totalNNAtomNum << " inferInfo_.localNNAtomNum="<< inferInfo_.localNNAtomNum <<
     " inferInfo_.atomForce_.size()=" << inferInfo_.atomForce_.size()  << std::endl;
-    
+    */
     std::vector<real> atomForcesGlobal(DIM * inferInfo_.totalNNAtomNum, 0.0);
     real localEnergy = 0;
     for (int i = 0; i < inferInfo_.totalLocalGhostNNAtomNum; ++i)
@@ -857,11 +862,11 @@ void DeepmdModel::getOutputs(const NNPotParameters& params, std::vector<int>& in
     }
 
 #else
-    
+    /*
     std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE getOutputs - Rank " << this->cr_->rankInDefaultCommunicator << 
     " inferInfo_.totalNNAtomNum=" << inferInfo_.totalNNAtomNum << " inferInfo_.localNNAtomNum="<< inferInfo_.localNNAtomNum <<
     " inferInfo_.atomForce_.size()=" << inferInfo_.atomForce_.size()  << std::endl;
-    
+    */
     real localEnergy = 0;
     for (int i = 0; i < inferInfo_.localNNAtomNum; ++i)
     {
@@ -883,9 +888,11 @@ void DeepmdModel::getOutputs(const NNPotParameters& params, std::vector<int>& in
 #endif
 
 #else
+    /*
     std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI = OFF getOutputs - Rank " << this->cr_->rankInDefaultCommunicator << 
     " inferInfo_.totalNNAtomNum=" << inferInfo_.totalNNAtomNum << " inferInfo_.localNNAtomNum="<< inferInfo_.localNNAtomNum <<
     " inferInfo_.atomForce_.size()=" << inferInfo_.atomForce_.size()  << std::endl;
+    */
     const bool modelOutputsForces = outputsForces();
     if (MAIN(cr_))
     {

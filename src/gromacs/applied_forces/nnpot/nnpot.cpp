@@ -151,7 +151,7 @@ public:
             nnpotOptions_.setLocalMMAtomSet(atomSet2);
             LocalAtomSet ghostSet2 = localAtomSetManager->addGhost(nnpotOptions_.parameters().mmIndices_);
             nnpotOptions_.setLocalMMGhostAtomSet(ghostSet2);
-            std::cout<< "In nnpot.cpp nnpotOptions_.parameters().inpIndices_.size()=" << nnpotOptions_.parameters().inpIndices_.size() << " nnpotOptions_.parameters().mmIndices_=" << nnpotOptions_.parameters().mmIndices_.size()<<std::endl;
+            //std::cout<< "In nnpot.cpp nnpotOptions_.parameters().inpIndices_.size()=" << nnpotOptions_.parameters().inpIndices_.size() << " nnpotOptions_.parameters().mmIndices_=" << nnpotOptions_.parameters().mmIndices_.size()<<std::endl;
         };
         notifier->simulationSetupNotifier_.subscribe(setLocalAtomSetFunction);
 

@@ -3180,7 +3180,7 @@ void dd_partition_system(FILE*                     fplog,
 
     if (dd->atomSets != nullptr)
     {
-        std::cout<< "In partition.cpp dd->atomSets->setIndicesInDomainDecomposition" <<std::endl;
+        //std::cout<< "In partition.cpp dd->atomSets->setIndicesInDomainDecomposition" <<std::endl;
         /* Update the local atom sets */
         dd->atomSets->setIndicesInDomainDecomposition(*(dd->ga2la));
     }
