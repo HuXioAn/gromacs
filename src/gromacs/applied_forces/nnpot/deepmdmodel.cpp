@@ -25,16 +25,13 @@
 
 #include "deepmdmodel.h"
 
-#define GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_BUILD_LIST 0
 #define GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_REBUILD_DD 1
 
 #define STR_HELPER(x) #x
 #define STR(x) STR_HELPER(x)
 #pragma message("GMX_DEEPMD_INFERENCE_MULTI_MPI = " STR(GMX_DEEPMD_INFERENCE_MULTI_MPI))
-#pragma message("GMX_DEEPMD_INFERENCE_MULTI_MPI_GHOST = " STR(GMX_DEEPMD_INFERENCE_MULTI_MPI_GHOST))
 #pragma message("GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE = " STR(GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE))
-#pragma message("GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_BUILD_LIST = " STR(GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_BUILD_LIST))
-
+#pragma message("GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_REBUILD_DD = " STR(GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_REBUILD_DD))
 
 
 namespace gmx
@@ -326,6 +323,10 @@ static inline void build_DD_manual(const int numRanks, int& nx, int& ny, int& nz
         nx = 1;
         ny = 1;
         nz = 16;
+    }else if(numRanks == 32){
+        nx = 1;
+        ny = 1;
+        nz = 32;
     }else{
         build_DD(numRanks,nx,ny,nz);
     }
@@ -340,12 +341,11 @@ static inline void rank_to_ijk(const int rank, const int nDDx, const int nDDy, c
     iz =  rank / (nDDx * nDDy);
 }
 
-static inline bool select_atom_pbc(const real atom_pos, const real lo, const real hi, const real Lbox, const real halo,
+
+static inline bool select_atom_local(const real atom_pos, const real lo, const real hi, const real Lbox, const real halo,
                                      real& atom_pos_shifted, bool& local) {
     const real width = hi - lo;                   // subdomain width
-    const real haloLow = lo - halo;
-    const real haloHigh = hi + halo;
-
+    local = false;
     if (width <= real(0)) return false;
     
     // select local atoms
@@ -354,26 +354,112 @@ static inline bool select_atom_pbc(const real atom_pos, const real lo, const rea
         local = true;
         return true;
     }
+    return false;
+}
+
+
+static inline bool select_atom_pbc(const real atom_pos, const real lo, const real hi, const real Lbox, const real halo,
+                                     real& atom_pos_shifted, bool& local) {
+    const real width = hi - lo;                   // subdomain width
+    const real haloLow = lo - halo;
+    const real haloHigh = hi + halo;
+    real atom_pos_test;
+    if (width <= real(0)) { local = false; return false; }
+    
+    // check local
+    local = (atom_pos >= lo && atom_pos < hi);
+    atom_pos_shifted = atom_pos;   // default to unshifted
 
     // left ghost atoms
-    if ( haloLow >= 0 ) { atom_pos_shifted = atom_pos; }
-    else{ atom_pos_shifted = atom_pos - Lbox; }
-    if (atom_pos_shifted >= haloLow && atom_pos_shifted < lo ){
-        local = false;
+    if ( haloLow >= 0.0 ) { atom_pos_test = atom_pos; }
+    else{ atom_pos_test  = atom_pos - Lbox; }
+    if (atom_pos_test >= haloLow && atom_pos_test < lo ){
+        atom_pos_shifted = atom_pos_test;
         return true;
     }
 
     // right ghost atoms
-    if (haloHigh < Lbox){ atom_pos_shifted = atom_pos; }
-    else{ atom_pos_shifted = atom_pos + Lbox; }
-    if (atom_pos_shifted >= hi && atom_pos_shifted < haloHigh ){
-        local = false;
+    if (haloHigh < Lbox){ atom_pos_test = atom_pos; }
+    else{ atom_pos_test = atom_pos + Lbox; }
+    if (atom_pos_test >= hi && atom_pos_test < haloHigh ){
+        atom_pos_shifted = atom_pos_test;
         return true;
     }
 
-    local = false;
-    return false;
+    return local;
 }
+
+
+static inline void select_pbc(
+    const std::array<real,3>& orig,
+    const std::array<real,3>& lo,
+    const std::array<real,3>& hi,
+    const std::array<real,3>& Lxyz,
+    const real rHalo,
+    const std::size_t idx,
+    const std::vector<int>& atomTypeGlobal,
+    std::vector<real>& atomPositionCollective,
+    std::vector<int>&  atomTypeCollective,
+    std::vector<int>&  atomIdxLocal,
+    std::vector<int>&  atomIdxGlobal,
+    int&               countLocal)
+{
+    real xShifted, yShifted, zShifted; // local coords relative to (xlo,ylo,zlo)
+    bool localx, localy, localz;
+    const bool inx = select_atom_pbc(orig[0], lo[0], hi[0], Lxyz[0], rHalo, xShifted, localx);
+    if (!inx) return;
+    const bool iny = select_atom_pbc(orig[1], lo[1], hi[1], Lxyz[1], rHalo, yShifted, localy);
+    if (!iny) return;
+    const bool inz = select_atom_pbc(orig[2], lo[2], hi[2], Lxyz[2], rHalo, zShifted, localz);
+    if (!inz) return;
+
+    if(localx && localy && localz) return;
+
+    atomPositionCollective.push_back(xShifted);
+    atomPositionCollective.push_back(yShifted);
+    atomPositionCollective.push_back(zShifted);
+    atomTypeCollective.push_back(atomTypeGlobal[idx]);
+    atomIdxGlobal.push_back(idx);
+    atomIdxLocal.push_back(-1);
+}
+static inline void select_local(
+    const std::array<real,3>& orig,
+    const std::array<real,3>& lo,
+    const std::array<real,3>& hi,
+    const std::array<real,3>& Lxyz,
+    const real rHalo,
+    const std::size_t idx,
+    const std::vector<int>& atomTypeGlobal,
+    std::vector<real>& atomPositionCollective,
+    std::vector<int>&  atomTypeCollective,
+    std::vector<int>&  atomIdxLocal,
+    std::vector<int>&  atomIdxGlobal,
+    int&               countLocal)
+{
+    real xShifted, yShifted, zShifted; // local coords relative to (xlo,ylo,zlo)
+    bool localx, localy, localz;
+    const bool inx = select_atom_local(orig[0], lo[0], hi[0], Lxyz[0], rHalo, xShifted, localx);
+    if (!inx) return;
+    const bool iny = select_atom_local(orig[1], lo[1], hi[1], Lxyz[1], rHalo, yShifted, localy);
+    if (!iny) return;
+    const bool inz = select_atom_local(orig[2], lo[2], hi[2], Lxyz[2], rHalo, zShifted, localz);
+    if (!inz) return;
+
+    atomPositionCollective.push_back(xShifted);
+    atomPositionCollective.push_back(yShifted);
+    atomPositionCollective.push_back(zShifted);
+    atomTypeCollective.push_back(atomTypeGlobal[idx]);
+    atomIdxGlobal.push_back(idx);
+    if (localx && localy && localz){
+        atomIdxLocal.push_back(atomIdxGlobal.back());
+        countLocal++;
+    }
+    else{
+        atomIdxLocal.push_back(-1);
+    }
+}
+
+
 
 // Extract local+halo atoms with PBC and *shifted local coordinates*.
 // Output layout matches input: [x0,y0,z0, x1,y1,z1, ...], but now positions
@@ -402,41 +488,35 @@ static inline void extract_atoms_local_with_halo_shifted(
     const real dy = Ly / real(nDDy);
     const real dz = Lz / real(nDDz);
 
-    const real xlo = dx * real(ix);
-    const real xhi = (ix == nDDx-1) ? Lx : dx * real(ix + 1);
+    const std::array<real,3> lo = {
+        dx * real(ix),
+        dy * real(iy),
+        dz * real(iz)
+    };
 
-    const real ylo = dy * real(iy);
-    const real yhi = (iy == nDDy-1) ? Ly : dy * real(iy + 1);
-
-    const real zlo = dz * real(iz);
-    const real zhi = (iz == nDDz-1) ? Lz : dz * real(iz + 1);
-
+    const std::array<real,3> hi = {
+        (ix == nDDx - 1) ? Lx : dx * real(ix + 1),
+        (iy == nDDy - 1) ? Ly : dy * real(iy + 1),
+        (iz == nDDz - 1) ? Lz : dz * real(iz + 1)
+    };
+    const std::array<real,3> Lxyz = {Lx,Ly,Lz};
     for (std::size_t i = 0; i < Ntot; ++i) {
         // Wrap globals into [0,L) first
-        const real xOrig = atomPosGlobal[DIM*i + 0];
-        const real yOrig = atomPosGlobal[DIM*i + 1];
-        const real zOrig = atomPosGlobal[DIM*i + 2];
-        real xShifted, yShifted, zShifted; // local coords relative to (xlo,ylo,zlo)
-        bool localx, localy, localz;
-        const bool inx = select_atom_pbc(xOrig, xlo, xhi, Lx, rHalo, xShifted, localx);
-        if (!inx) continue;
-        const bool iny = select_atom_pbc(yOrig, ylo, yhi, Ly, rHalo, yShifted, localy);
-        if (!iny) continue;
-        const bool inz = select_atom_pbc(zOrig, zlo, zhi, Lz, rHalo, zShifted, localz);
-        if (!inz) continue;
-
-        atomPositionCollective.push_back(xShifted);
-        atomPositionCollective.push_back(yShifted);
-        atomPositionCollective.push_back(zShifted);
-        atomTypeCollective.push_back(atomTypeGlobal[i]);
-        atomIdxGlobal.push_back(i);
-        if (localx && localy && localz){
-            atomIdxLocal.push_back(atomIdxGlobal.back());
-            countLocal++;
-        }
-        else{
-            atomIdxLocal.push_back(-1);
-        }
+        const std::array<real,3> orig = {atomPosGlobal[DIM*i + 0],atomPosGlobal[DIM*i + 1],atomPosGlobal[DIM*i + 2]};
+        select_local(orig,lo,hi, Lxyz, rHalo, i,
+                    atomTypeGlobal,
+                    atomPositionCollective,
+                    atomTypeCollective,
+                    atomIdxLocal,
+                    atomIdxGlobal,
+                    countLocal);
+        select_pbc(orig,lo,hi, Lxyz, rHalo, i,
+                    atomTypeGlobal,
+                    atomPositionCollective,
+                    atomTypeCollective,
+                    atomIdxLocal,
+                    atomIdxGlobal,
+                    countLocal);
     }
 }
 
@@ -448,7 +528,6 @@ void  DeepmdModel::preProcessData(const NNPotParameters& params, std::vector<int
     constexpr real twiceRCutoffSqrd = (real)4.0 * ghostCutOff * ghostCutOff;    
  
 #if GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE
-    
 
 #if GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_REBUILD_DD
     
@@ -463,8 +542,8 @@ void  DeepmdModel::preProcessData(const NNPotParameters& params, std::vector<int
     const real boxLz = inferInfo_.box_[2*DIM + 2];
 
     int nDDx, nDDy, nDDz;
-    //build_DD_manual(numSubDomains,nDDx,nDDy,nDDz);
-    build_DD(numSubDomains,nDDx,nDDy,nDDz);
+    build_DD_manual(numSubDomains,nDDx,nDDy,nDDz);
+    //build_DD(numSubDomains,nDDx,nDDy,nDDz);
     
     //reserve three times the memory required by local atoms
     inferInfo_.localIdxes_.clear();
@@ -499,7 +578,7 @@ void  DeepmdModel::preProcessData(const NNPotParameters& params, std::vector<int
     " idxLookup.size()=" << idxLookup.size() << std::endl;
 
 #else
-
+    // create ghost halos computing pair to pair distances
     inferInfo_.localNNAtomNum = params.inpAtoms_->numAtomsLocal();
     //reserve three times the memory required by local atoms
     inferInfo_.localIdxes_.clear();
@@ -599,35 +678,9 @@ void DeepmdModel::evaluateModel()
 
     inferInfo_.box_.clear();
     inferInfo_.step++;
-    inferInfo_.keepNList = inferInfo_.step % 3;
     inferInfo_.atomForce_.clear();
     inferInfo_.atomEnergy_.clear();
     inferInfo_.atomVirial_.clear();
-    std::vector<real> atomForce;
-    std::vector<real> virial;
-    std::vector<real> atomEnergy;
-    std::vector<real> atomVirial;
-#if GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_BUILD_LIST
-    auto time0 = std::chrono::high_resolution_clock::now();
-    dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_, inferInfo_.atomEnergy_, inferInfo_.atomVirial_,
-            inferInfo_.atomPositionCollective_, inferInfo_.atomTypeCollective_ , inferInfo_.box_, 0, inferInfo_.neighList,  0);
-    auto time1 = std::chrono::high_resolution_clock::now();
-    dp_->compute<real>(inferInfo_.energy_, atomForce, virial, atomEnergy, atomVirial,
-            inferInfo_.atomPositionCollective_, inferInfo_.atomTypeCollective_ , inferInfo_.box_, 0, inferInfo_.neighList, 1);
-    auto time2 = std::chrono::high_resolution_clock::now();
-    dp_->compute<real>(inferInfo_.energy_, inferInfo_.atomForce_, inferInfo_.virial_, inferInfo_.atomEnergy_, inferInfo_.atomVirial_,
-        inferInfo_.atomPositionCollective_, inferInfo_.atomTypeCollective_ , inferInfo_.box_);
-    auto time3 = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> duration1 = time1 - time0;
-    std::chrono::duration<double> duration2 = time2 - time1;
-    std::chrono::duration<double> duration3 = time3 - time2;
-    std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE compute - Rank " << this->cr_->rankInDefaultCommunicator <<
-    "  inferInfo_.step " <<  inferInfo_.step <<
-    " - time compute with inputlist " << (duration1.count())*1000 << " millis" << 
-    " time compute with inputlist no rebuild " << (duration2.count())*1000 << " millis" << 
-    " time compute w/o inputlist " <<(duration3.count())*1000 << " millis" <<std::endl;
-
-#else
 
     auto time0 = std::chrono::high_resolution_clock::now();
     if(inferInfo_.atomPositionCollective_.size() > 0){
@@ -639,8 +692,6 @@ void DeepmdModel::evaluateModel()
     std::cout<< "GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE compute - Rank " << this->cr_->rankInDefaultCommunicator <<
     "  inferInfo_.step " <<  inferInfo_.step <<
     " - time compute w/o inputlist " << (duration1.count())*1000 << " millis" << std::endl;
-
-#endif
 
 #else
 
@@ -801,10 +852,7 @@ void DeepmdModel::getOutputs(const NNPotParameters& params, std::vector<int>& in
     for (int i = 0; i < inferInfo_.totalNNAtomNum; ++i)
     {
         // if value in lookup table is -1, the atom is not local
-        if (indices[i] == -1)
-        {
-            continue;
-        }
+        if (indices[i] == -1) continue;
         forces[indices[i]][0] += atomForcesGlobal[i * DIM + 0] * f_dp2gmx * lambda; // convert to gromacs unit
         forces[indices[i]][1] += atomForcesGlobal[i * DIM + 1] * f_dp2gmx * lambda; // convert to gromacs unit
         forces[indices[i]][2] += atomForcesGlobal[i * DIM + 2] * f_dp2gmx * lambda; // convert to gromacs unit

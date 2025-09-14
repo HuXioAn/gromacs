@@ -40,7 +40,7 @@ gmx_option_multichoice(GMX_NNPOT
 gmx_option_multichoice(GMX_DEEPMD_INFERENCE_MULTI_MPI 
     "Enable DeePMD multi MPI rank inference network potential interface."
     OFF
-    GHOST COLLECTIVE OFF
+    COLLECTIVE OFF
 )
 
 if(TORCH_ALREADY_SEARCHED)
