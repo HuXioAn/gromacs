@@ -311,22 +311,10 @@ static inline void build_DD_manual(const int numRanks, int& nx, int& ny, int& nz
         nx = 1;
         ny = 1;
         nz = 2;
-    }else if(numRanks == 4){
+    }else if(numRanks % 4 == 0){
         nx = 1;
         ny = 1;
-        nz = 4;
-    }else if(numRanks == 8){
-        nx = 1;
-        ny = 1;
-        nz = 8;
-    }else if(numRanks == 16){
-        nx = 1;
-        ny = 1;
-        nz = 16;
-    }else if(numRanks == 32){
-        nx = 1;
-        ny = 1;
-        nz = 32;
+        nz = numRanks;
     }else{
         build_DD(numRanks,nx,ny,nz);
     }
@@ -371,19 +359,29 @@ static inline bool select_atom_pbc(const real atom_pos, const real lo, const rea
     atom_pos_shifted = atom_pos;   // default to unshifted
 
     // left ghost atoms
-    if ( haloLow >= 0.0 ) { atom_pos_test = atom_pos; }
-    else{ atom_pos_test  = atom_pos - Lbox; }
-    if (atom_pos_test >= haloLow && atom_pos_test < lo ){
-        atom_pos_shifted = atom_pos_test;
+    if (atom_pos >= haloLow && atom_pos < lo ){
+        atom_pos_shifted = atom_pos;
         return true;
+    }
+    if ( haloLow < 0.0 ){
+        atom_pos_test  = atom_pos - Lbox;
+        if (atom_pos_test >= haloLow && atom_pos_test < 0.0 ){
+            atom_pos_shifted = atom_pos_test;
+            return true;
+        }
     }
 
     // right ghost atoms
-    if (haloHigh < Lbox){ atom_pos_test = atom_pos; }
-    else{ atom_pos_test = atom_pos + Lbox; }
-    if (atom_pos_test >= hi && atom_pos_test < haloHigh ){
-        atom_pos_shifted = atom_pos_test;
+    if (atom_pos >= hi && atom_pos < haloHigh ){
+        atom_pos_shifted = atom_pos;
         return true;
+    }
+    if (haloHigh > Lbox){
+        atom_pos_test = atom_pos + Lbox;
+        if (atom_pos_test >= Lbox && atom_pos_test < haloHigh ){
+            atom_pos_shifted = atom_pos_test;
+            return true;
+        }
     }
 
     return local;
@@ -523,8 +521,8 @@ static inline void extract_atoms_local_with_halo_shifted(
 void  DeepmdModel::preProcessData(const NNPotParameters& params, std::vector<int>& idxLookup)
 {
 
-    constexpr real ghostCutOff = 6.5; // in Angstrom
-    constexpr real rCutoff = 6.2;
+    constexpr real ghostCutOff = 6.1; // in Angstrom
+    constexpr real rCutoff = 6.0;
     constexpr real twiceRCutoffSqrd = (real)4.0 * ghostCutOff * ghostCutOff;    
  
 #if GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE
