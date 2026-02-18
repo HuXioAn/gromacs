@@ -25,13 +25,28 @@
 
 #include "deepmdmodel.h"
 
+#include <roctx.h>
+
+#define ROC_TX 1
+
+#if ROC_TX
+    #define ROC_TX_PUSH(name) roctxRangePushA(name)
+    #define ROC_TX_POP()     roctxRangePop()
+#else
+    #define ROC_TX_PUSH(name)
+    #define ROC_TX_POP()
+#endif
+
 #define GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_REBUILD_DD 1
+
 
 #define STR_HELPER(x) #x
 #define STR(x) STR_HELPER(x)
 #pragma message("GMX_DEEPMD_INFERENCE_MULTI_MPI = " STR(GMX_DEEPMD_INFERENCE_MULTI_MPI))
 #pragma message("GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE = " STR(GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE))
 #pragma message("GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_REBUILD_DD = " STR(GMX_DEEPMD_INFERENCE_MULTI_MPI_COLLECTIVE_REBUILD_DD))
+
+
 
 
 namespace gmx
@@ -311,13 +326,26 @@ static inline void build_DD_manual(const int numRanks, int& nx, int& ny, int& nz
         nx = 1;
         ny = 1;
         nz = 2;
-    }else if(numRanks % 4 == 0){
+        return;
+    }else if(numRanks % 3 == 0){
+        nx = 1;
+        ny = 3;
+        nz = numRanks / 3;
+        return;
+    }else if(numRanks == 8){
         nx = 1;
         ny = 1;
         nz = numRanks;
+        return;
+    }else if(numRanks % 4 == 0){
+        nx = 1;
+        ny = 2;
+        nz = numRanks / 2;
+        return;
     }else{
         build_DD(numRanks,nx,ny,nz);
     }
+    nx = 1, ny = 1, nz = 8;
 }
 
 // Linear rank → (ix,iy,iz). Use MPI_Cart_coords if you already have a Cart grid.
@@ -520,6 +548,7 @@ static inline void extract_atoms_local_with_halo_shifted(
 
 void  DeepmdModel::preProcessData(const NNPotParameters& params, std::vector<int>& idxLookup)
 {
+    ROC_TX_PUSH("DeepmdModel::preProcessData");
 
     constexpr real ghostCutOff = 6.1; // in Angstrom
     constexpr real rCutoff = 6.0;
@@ -654,11 +683,13 @@ void  DeepmdModel::preProcessData(const NNPotParameters& params, std::vector<int
 
 #endif
 
+    ROC_TX_POP();
 
 }
 
 void DeepmdModel::evaluateModel()
 {
+    ROC_TX_PUSH("DeepmdModel::evaluateModel"); 
     if (!isInit_)
     {
         GMX_THROW(InternalError("deepmd not initialized before evaluateModel() was called."));
@@ -709,6 +740,7 @@ void DeepmdModel::evaluateModel()
 
 #endif
     outputReady_ = true;
+    ROC_TX_POP();
 }
 
 
@@ -807,6 +839,7 @@ void DeepmdModel::writeForces(const int idx,const NNPotParameters& params, std::
 
 void DeepmdModel::getOutputs(const NNPotParameters& params, std::vector<int>& indices, gmx_enerdata_t& enerd, const ArrayRef<RVec>& forces)
 {
+    ROC_TX_PUSH("DeepmdModel::getOutputs");
     if (!isInit_)
     {
         GMX_THROW(InternalError("Model not initialized before prepareInputs() was called."));
@@ -927,6 +960,7 @@ void DeepmdModel::getOutputs(const NNPotParameters& params, std::vector<int>& in
 
 #endif
     outputReady_ = false;
+    ROC_TX_POP();
 }
 
 void DeepmdModel::setCommRec(const t_commrec* cr)

@@ -66,6 +66,21 @@
 #include "deepmdmodel.h"
 #endif
 
+
+#include <roctx.h>
+
+#define ROC_TX 1
+
+#if ROC_TX
+    #define ROC_TX_PUSH(name) roctxRangePushA(name)
+    #define ROC_TX_POP()     roctxRangePop()
+#else
+    #define ROC_TX_PUSH(name)
+    #define ROC_TX_POP()
+#endif
+
+
+
 namespace gmx
 {
 
@@ -107,6 +122,7 @@ NNPotForceProvider::~NNPotForceProvider() {}
 
 void NNPotForceProvider::calculateForces(const ForceProviderInput& fInput, ForceProviderOutput* fOutput)
 {
+    ROC_TX_PUSH("NNPotForceProvider::calculateForces");
     // store a pointer to the communication record
     cr_ = &(fInput.cr_);
     model_->setCommRec(cr_);
@@ -155,6 +171,7 @@ void NNPotForceProvider::calculateForces(const ForceProviderInput& fInput, Force
 #else
     model_->getOutputs(idxLookup_, fOutput->enerd_, fOutput->forceWithVirial_.force_);
 #endif
+    ROC_TX_POP();
 }
 
 void NNPotForceProvider::gatherAtomNumbersIndices()
@@ -204,6 +221,7 @@ void NNPotForceProvider::gatherAtomNumbersIndices()
 
 void NNPotForceProvider::gatherAtomPositions(ArrayRef<const RVec> pos)
 {
+    ROC_TX_PUSH("NNPotForceProvider::gatherAtomPositions");
     // collect atom positions
     // at this point, we already have the atom numbers and indices, so we can fill the positions
     size_t numInput = idxLookup_.size();
@@ -225,6 +243,8 @@ void NNPotForceProvider::gatherAtomPositions(ArrayRef<const RVec> pos)
     {
         gmx_sum(3 * numInput, positions_.data()->as_vec(), cr_);
     }
+
+    ROC_TX_POP();
 }
 
 } // namespace gmx
